@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "created_at_utc": "2026-08-09T06:32:05.145219+00:00",
+  "database": "fx3u_knowledge.sqlite",
+  "cases": 220,
+  "positive_cases": 204,
+  "negative_cases": 16,
+  "categories": {
+    "instruction": 40,
+    "instruction_paraphrase": 40,
+    "device": 20,
+    "error": 20,
+    "debug_case": 26,
+    "debug_paraphrase": 26,
+    "motion_instruction": 5,
+    "motion_device": 6,
+    "motion_status": 3,
+    "motion_debug": 1,
+    "motion_wiring": 2,
+    "motion_hardware": 4,
+    "motion_requirements": 1,
+    "motion_manual_section": 2,
+    "structured_programming": 8,
+    "negative": 16
+  },
+  "top_k_for_evaluation": 10
+}

@@ -1,0 +1,419 @@
+import base64
+import copy
+from types import SimpleNamespace
+
+import pytest
+
+import api
+from config_manager import DEFAULT_MODEL_PROFILES
+from model_provider import (
+    AssistantMessage,
+    ImageAttachment,
+    ModelProviderError,
+    ModelRequest,
+    OpenAICompatibleProvider,
+    ReasoningDelta,
+    SystemMessage,
+    TextDelta,
+    ToolCall,
+    ToolCallEnd,
+    ToolCallStart,
+    Usage,
+    UserMessage,
+    collect_response,
+    create_provider,
+)
+
+
+def _tool_delta(index, *, call_id="", name="", arguments=""):
+    return SimpleNamespace(
+        index=index,
+        id=call_id or None,
+        function=SimpleNamespace(name=name or None, arguments=arguments),
+    )
+
+
+def _chunk(*, reasoning="", content="", tool_calls=None, usage=None, choices=True):
+    values = []
+    if choices:
+        values.append(
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    reasoning_content=reasoning or None,
+                    content=content or None,
+                    tool_calls=tool_calls or [],
+                )
+            )
+        )
+    return SimpleNamespace(choices=values, usage=usage)
+
+
+class _Completions:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(copy.deepcopy(kwargs))
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class _Client:
+    def __init__(self, responses, models=()):
+        self.completions = _Completions(responses)
+        self.chat = SimpleNamespace(completions=self.completions)
+        self.models = SimpleNamespace(
+            list=lambda: SimpleNamespace(
+                data=[SimpleNamespace(id=value) for value in models]
+            )
+        )
+        self.options = []
+
+    def with_options(self, **kwargs):
+        self.options.append(copy.deepcopy(kwargs))
+        return self
+
+
+def _profile(profile_id):
+    return copy.deepcopy(
+        next(item for item in DEFAULT_MODEL_PROFILES if item["id"] == profile_id)
+    )
+
+
+@pytest.mark.parametrize("profile_id", ["deepseek-default", "zhipu-glm-5.3-flash"])
+def test_openai_compatible_profiles_normalize_sync_reasoning_tools_and_usage(profile_id):
+    calls = [
+        SimpleNamespace(
+            id="call_1",
+            function=SimpleNamespace(name="read_network", arguments='{"network_id":"N0001"}'),
+        ),
+        SimpleNamespace(
+            id="call_2",
+            function=SimpleNamespace(name="get_diagnostics", arguments="{}"),
+        ),
+    ]
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    reasoning_content="先读取网络，再查看诊断。",
+                    content="已完成检查。",
+                    tool_calls=calls,
+                )
+            )
+        ],
+        usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7, total_tokens=18),
+    )
+    client = _Client([response])
+    provider = OpenAICompatibleProvider(_profile(profile_id), "key", client=client)
+    request = ModelRequest(
+        (SystemMessage("system"), UserMessage("检查")),
+        stream=False,
+    )
+
+    collected = collect_response(provider, request)
+
+    assert collected.message.content == "已完成检查。"
+    assert collected.message.reasoning == "先读取网络，再查看诊断。"
+    assert [item.name for item in collected.message.tool_calls] == [
+        "read_network",
+        "get_diagnostics",
+    ]
+    assert collected.usage == Usage(11, 7, 18)
+    assert client.completions.calls[0]["stream"] is False
+
+
+def test_streaming_fragmented_multi_tool_calls_and_empty_chunks_are_normalized():
+    usage = SimpleNamespace(prompt_tokens=20, completion_tokens=10, total_tokens=30)
+    chunks = [
+        _chunk(choices=False),
+        _chunk(reasoning="分析"),
+        _chunk(
+            reasoning="完成。",
+            tool_calls=[
+                _tool_delta(0, call_id="call_", name="read_", arguments="{"),
+                _tool_delta(1, call_id="diag_", name="get_", arguments="{"),
+            ],
+        ),
+        _chunk(
+            content="开始执行",
+            tool_calls=[
+                _tool_delta(0, call_id="1", name="network", arguments='"network_id":"N0001"}'),
+                _tool_delta(1, call_id="1", name="diagnostics", arguments="}"),
+            ],
+        ),
+        _chunk(choices=False, usage=usage),
+    ]
+    provider = OpenAICompatibleProvider(
+        _profile("deepseek-default"), "key", client=_Client([iter(chunks)])
+    )
+
+    events = list(
+        provider.stream(ModelRequest((UserMessage("检查"),), stream=True))
+    )
+
+    assert [event.text for event in events if isinstance(event, ReasoningDelta)] == [
+        "分析",
+        "完成。",
+    ]
+    assert [event.text for event in events if isinstance(event, TextDelta)] == [
+        "开始执行"
+    ]
+    assert [event.name for event in events if isinstance(event, ToolCallStart)] == [
+        "read_network",
+        "get_diagnostics",
+    ]
+    ended = [event.tool_call for event in events if isinstance(event, ToolCallEnd)]
+    assert ended == [
+        ToolCall("call_1", "read_network", '{"network_id":"N0001"}'),
+        ToolCall("diag_1", "get_diagnostics", "{}"),
+    ]
+    assert events[-1] == Usage(20, 10, 30)
+
+
+def test_parameter_precedence_and_capability_constraints_for_built_in_profiles():
+    tool = {
+        "type": "function",
+        "function": {"name": "get_diagnostics", "parameters": {"type": "object"}},
+    }
+    deepseek = OpenAICompatibleProvider(
+        _profile("deepseek-default"), "key", client=_Client([iter([])])
+    )
+    deepseek_params = deepseek._request_params(
+        ModelRequest(
+            (UserMessage("检查"),),
+            tools=(tool,),
+            options={"temperature": 0.2, "response_format": None, "tool_choice": "auto"},
+            stream=True,
+        )
+    )
+    assert deepseek_params["temperature"] == 0.2
+    assert "response_format" not in deepseek_params
+    assert "tool_choice" not in deepseek_params
+    assert deepseek_params["extra_body"]["thinking"]["type"] == "enabled"
+
+    glm = OpenAICompatibleProvider(
+        _profile("zhipu-glm-5.3-flash"), "key", client=_Client([iter([])])
+    )
+    glm_params = glm._request_params(
+        ModelRequest(
+            (UserMessage("检查"),),
+            tools=(tool,),
+            options={"temperature": 0.15, "reasoning_effort": "high"},
+            stream=True,
+        )
+    )
+    assert glm_params["temperature"] == 0.15
+    assert glm_params["top_p"] == 0.95
+    assert glm_params["reasoning_effort"] == "high"
+    assert glm_params["extra_body"]["thinking"] == {
+        "type": "enabled",
+        "clear_thinking": False,
+    }
+    assert glm_params["extra_body"]["tool_stream"] is True
+
+
+@pytest.mark.parametrize(
+    "profile_id",
+    ["deepseek-v4-flash-vision-exp", "zhipu-glm-5.3-flash"],
+)
+def test_multimodal_profiles_encode_local_images_as_openai_compatible_blocks(
+    profile_id,
+):
+    image = ImageAttachment(
+        "接线图.png",
+        "image/png",
+        b"\x89PNG\r\n\x1a\nfixture",
+    )
+    provider = OpenAICompatibleProvider(
+        _profile(profile_id), "key", client=_Client([iter([])])
+    )
+
+    params = provider._request_params(
+        ModelRequest(
+            (UserMessage("请识别图中的输入输出", (image,)),),
+            stream=True,
+        )
+    )
+
+    blocks = params["messages"][0]["content"]
+    assert blocks[0] == {"type": "text", "text": "请识别图中的输入输出"}
+    assert blocks[1]["type"] == "image_url"
+    data_url = blocks[1]["image_url"]["url"]
+    assert data_url.startswith("data:image/png;base64,")
+    assert base64.b64decode(data_url.split(",", 1)[1]) == image.data
+
+
+@pytest.mark.parametrize("profile_id", ["deepseek-default", "deepseek-v4-flash"])
+def test_text_profiles_reject_images_before_calling_the_sdk(profile_id):
+    provider = OpenAICompatibleProvider(
+        _profile(profile_id), "key", client=_Client([iter([])])
+    )
+    image = ImageAttachment("图.png", "image/png", b"image")
+
+    with pytest.raises(ModelProviderError) as captured:
+        provider._request_params(
+            ModelRequest((UserMessage("识别", (image,)),), stream=True)
+        )
+
+    assert captured.value.code == "image_not_supported"
+    assert "不支持图片输入" in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("profile_id", "effort"),
+    [
+        ("zhipu-glm-5.3", "low"),
+        ("zhipu-glm-5.2", "high"),
+    ],
+)
+def test_glm_text_profiles_use_the_shared_streaming_tool_adapter(
+    profile_id, effort
+):
+    tool = {
+        "type": "function",
+        "function": {"name": "get_diagnostics", "parameters": {"type": "object"}},
+    }
+    provider = OpenAICompatibleProvider(
+        _profile(profile_id), "key", client=_Client([iter([])])
+    )
+
+    params = provider._request_params(
+        ModelRequest(
+            (UserMessage("检查"),),
+            tools=(tool,),
+            options={"reasoning_effort": effort},
+            stream=True,
+        )
+    )
+
+    assert params["model"] == _profile(profile_id)["model"]
+    assert params["reasoning_effort"] == effort
+    assert params["extra_body"]["thinking"]["type"] == "enabled"
+    assert params["extra_body"]["tool_stream"] is True
+
+
+def test_assistant_reasoning_is_replayed_only_by_transport_adapter():
+    provider = OpenAICompatibleProvider(
+        _profile("deepseek-default"), "key", client=_Client([iter([])])
+    )
+    params = provider._request_params(
+        ModelRequest(
+            (
+                AssistantMessage(
+                    "",
+                    (ToolCall("call_1", "get_diagnostics", "{}"),),
+                    "保留本轮推理回放",
+                ),
+            ),
+            stream=True,
+        )
+    )
+
+    assert params["messages"][0]["reasoning_content"] == "保留本轮推理回放"
+    assert params["messages"][0]["tool_calls"][0]["function"]["name"] == "get_diagnostics"
+
+
+def test_custom_openai_compatible_profile_needs_no_new_provider_code():
+    profile = {
+        "id": "custom",
+        "name": "自定义服务",
+        "adapter": "openai_compatible",
+        "baseUrl": "https://example.invalid/v1",
+        "model": "custom-model",
+        "generationDefaults": {"temperature": 0.3},
+        "capabilities": {},
+        "requestOverrides": {"extra_body": {"vendor_flag": True}},
+    }
+    provider = create_provider(profile, "key", client=_Client([iter([])]))
+
+    params = provider._request_params(ModelRequest((UserMessage("hi"),), stream=True))
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert params["model"] == "custom-model"
+    assert params["temperature"] == 0.3
+    assert params["extra_body"] == {"vendor_flag": True}
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_code", "retryable"),
+    [(401, "authentication", False), (429, "rate_limit", True), (503, "unavailable", True)],
+)
+def test_provider_normalizes_transport_errors(status, expected_code, retryable):
+    error = RuntimeError("transport failed")
+    error.status_code = status
+    provider = OpenAICompatibleProvider(
+        _profile("deepseek-default"), "key", client=_Client([error])
+    )
+
+    with pytest.raises(ModelProviderError) as captured:
+        list(provider.stream(ModelRequest((UserMessage("hi"),), stream=True)))
+
+    assert captured.value.code == expected_code
+    assert captured.value.retryable is retryable
+    assert captured.value.status_code == status
+
+
+def test_provider_rejects_protocol_response_without_choices():
+    provider = OpenAICompatibleProvider(
+        _profile("deepseek-default"),
+        "key",
+        client=_Client([SimpleNamespace(choices=[], usage=None)]),
+    )
+
+    with pytest.raises(ModelProviderError, match="候选") as captured:
+        list(provider.stream(ModelRequest((UserMessage("hi"),), stream=False)))
+
+    assert captured.value.code == "protocol"
+
+
+def test_request_timeout_and_retry_options_are_applied_to_client():
+    client = _Client([iter([])])
+    provider = OpenAICompatibleProvider(_profile("deepseek-default"), "key", client=client)
+
+    list(
+        provider.stream(
+            ModelRequest(
+                (UserMessage("hi"),),
+                stream=True,
+                timeout=12.5,
+                max_retries=0,
+            )
+        )
+    )
+
+    assert client.options == [{"timeout": 12.5, "max_retries": 0}]
+
+
+def test_new_history_messages_strip_legacy_provider_fields_before_request():
+    messages = api._build_clean_messages(
+        [
+            {
+                "role": "assistant",
+                "content": "可见正文",
+                "reasoning_content": "旧厂商字段",
+                "choices": ["旧响应"],
+            }
+        ],
+        "system",
+    )
+
+    assert messages == [
+        {"role": "system", "content": "system"},
+        {"role": "assistant", "content": "可见正文"},
+    ]
+
+
+def test_deprecated_vendor_named_entrypoint_is_only_a_forwarding_alias(monkeypatch):
+    sentinel = object()
+    monkeypatch.setattr(api, "analyze_requirement", lambda *args, **kwargs: sentinel)
+    alias = api._deprecated_model_alias(
+        "call_deepseek_analyze_requirement", api.analyze_requirement
+    )
+
+    with pytest.deprecated_call():
+        assert alias("test") is sentinel
+    assert alias.__deprecated__ is True

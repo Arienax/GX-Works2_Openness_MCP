@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "evaluated_at_utc": "2026-08-28T12:28:01.905032+00:00",
+  "database": "E:\\baidudownload\\毕业设计V6\\毕业设计V6\\knowledge\\fx3u_knowledge.sqlite",
+  "benchmark": "E:\\baidudownload\\毕业设计V6\\毕业设计V6\\benchmarks\\fx3u_rag_benchmark.jsonl",
+  "cases": 220,
+  "positive_cases": 204,
+  "negative_cases": 16,
+  "recall_at_1": 0.8627,
+  "recall_at_5": 0.9804,
+  "recall_at_10": 1.0,
+  "mrr": 0.9033,
+  "negative_accuracy": 1.0,
+  "latency_ms": {
+    "mean": 58.156,
+    "p50": 60.207,
+    "p95": 99.412,
+    "max": 199.471
+  },
+  "categories": {
+    "debug_case": {
+      "cases": 26,
+      "passed": 26,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "debug_paraphrase": {
+      "cases": 26,
+      "passed": 26,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "device": {
+      "cases": 20,
+      "passed": 20,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "error": {
+      "cases": 20,
+      "passed": 20,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "instruction": {
+      "cases": 40,
+      "passed": 40,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "instruction_paraphrase": {
+      "cases": 40,
+      "passed": 40,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "motion_debug": {
+      "cases": 1,
+      "passed": 1,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "motion_device": {
+      "cases": 6,
+      "passed": 6,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "motion_hardware": {
+      "cases": 4,
+      "passed": 4,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "motion_instruction": {
+      "cases": 5,
+      "passed": 5,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "motion_manual_section": {
+      "cases": 2,
+      "passed": 2,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "motion_requirements": {
+      "cases": 1,
+      "passed": 1,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "motion_status": {
+      "cases": 3,
+      "passed": 3,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "motion_wiring": {
+      "cases": 2,
+      "passed": 2,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    },
+    "negative": {
+      "cases": 16,
+      "passed": 16,
+      "pass_rate": 1.0,
+      "recall_at_10": null,
+      "negative_accuracy": 1.0
+    },
+    "structured_programming": {
+      "cases": 8,
+      "passed": 8,
+      "pass_rate": 1.0,
+      "recall_at_10": 1.0,
+      "negative_accuracy": null
+    }
+  },
+  "failures": [],
+  "passed_threshold": true
+}

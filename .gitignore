@@ -1,0 +1,62 @@
+# Python/runtime state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.venv/
+venv/
+config.json
+chat_history.json
+confirmed_requirements.json
+real_deepseek_output.json
+temp_program.st
+*.sqlite-shm
+*.sqlite-wal
+
+# Credentials and private local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets*.json
+
+# Vendor manuals are downloaded from the official URLs in sources.json.
+resources/knowledge/sources/*.pdf
+
+# Build and release outputs
+build/
+build_*/
+dist/
+dist_*/
+release/
+out/
+cmake-build-*/
+src-cpp/build*/
+src-cpp/out/
+*.user
+*.suo
+.vs/
+
+# Local assistant/editor state
+.agents/
+.claude/
+.codex/
+.codex-backups/
+
+# Operating system files
+Thumbs.db
+Desktop.ini
+*.tmp
+*.log
+~$*
+
+# Legacy files generated in the repository working directory
+/COMMENT.csv
+/plc_import_comment.csv
+/plc_import_program.csv
+/real_import_program.csv
+/test.csv
+/temp_program.st

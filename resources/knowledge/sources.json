@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "manuals": [
+    {
+      "id": "fx3_programming_r",
+      "file": "sources/JY997D16601-R_FX3S-FX3U_Programming.pdf",
+      "manual_number": "JY997D16601",
+      "revision": "R",
+      "published": "2021-04",
+      "title": "FX3S/FX3G/FX3GC/FX3U/FX3UC Series Programming Manual - Basic & Applied Instruction Edition",
+      "language": "en",
+      "manual_type": "programming",
+      "plc_models": ["FX3S", "FX3G", "FX3GC", "FX3U", "FX3UC"],
+      "priority": 100,
+      "official_url": "https://dl.mitsubishielectric.com/dl/fa/document/manual/plc_fx/jy997d16601/jy997d16601r.pdf",
+      "sha256": "42ccf0ec3a210740354905a577012edfa2e030b6dc48fb856d91d40f175d1556"
+    },
+    {
+      "id": "fx3_positioning_k",
+      "file": "sources/JY997D16801-K_FX3_Positioning_Control.pdf",
+      "manual_number": "JY997D16801",
+      "revision": "K",
+      "published": "2015-04",
+      "title": "FX3S/FX3G/FX3GC/FX3U/FX3UC Series User's Manual - Positioning Control Edition",
+      "language": "en",
+      "manual_type": "positioning",
+      "plc_models": ["FX3S", "FX3G", "FX3GC", "FX3U", "FX3UC"],
+      "priority": 99,
+      "official_url": "https://dl.mitsubishielectric.com/dl/fa/document/manual/plc_fx/jy997d16801/jy997d16801k.pdf",
+      "sha256": "d525c31f8ac0186c4cd1b0961d69c59d68105e139c1afdedd220abcbc660faf5"
+    },
+    {
+      "id": "fxcpu_device_common_l",
+      "file": "sources/JY997D26001-L_FXCPU_Device_Common.pdf",
+      "manual_number": "JY997D26001",
+      "revision": "L",
+      "published": "2015-04",
+      "title": "FXCPU Structured Programming Manual [Device & Common]",
+      "language": "en",
+      "manual_type": "structured_device",
+      "plc_models": ["FX3S", "FX3G", "FX3GC", "FX3U", "FX3UC"],
+      "priority": 92,
+      "official_url": "https://dl.mitsubishielectric.com/dl/fa/document/manual/plc_fx/jy997d26001/jy997d26001l.pdf",
+      "sha256": "5fb27f648f20da221337267135cd1ffdc9fab0f53c7e767f76624418e7add33c"
+    },
+    {
+      "id": "fxcpu_basic_applied_m",
+      "file": "sources/JY997D34701-M_FXCPU_Basic_Applied.pdf",
+      "manual_number": "JY997D34701",
+      "revision": "M",
+      "published": "2015-04",
+      "title": "FXCPU Structured Programming Manual - Basic & Applied Instruction",
+      "language": "en",
+      "manual_type": "structured_instruction",
+      "plc_models": ["FX3S", "FX3G", "FX3GC", "FX3U", "FX3UC"],
+      "priority": 95,
+      "official_url": "https://dl.mitsubishielectric.com/dl/fa/document/manual/plc_fx/jy997d34701/jy997d34701m.pdf",
+      "sha256": "2276624772d5c8056a571e938988ee2b888393285e2013e22056d9b4c44239a4"
+    },
+    {
+      "id": "fxcpu_application_k",
+      "file": "sources/JY997D34801-K_FXCPU_Application_Functions.pdf",
+      "manual_number": "JY997D34801",
+      "revision": "K",
+      "published": "2015-04",
+      "title": "FXCPU Structured Programming Manual [Application Functions]",
+      "language": "en",
+      "manual_type": "structured_function",
+      "plc_models": ["FX3S", "FX3G", "FX3GC", "FX3U", "FX3UC"],
+      "priority": 88,
+      "official_url": "https://dl.mitsubishielectric.com/dl/fa/document/manual/plc_fx/jy997d34801/jy997d34801k.pdf",
+      "sha256": "d2b3ef30b44f41b353407fc5ea0f28f3cdf36c4646c84e715639d4525bd23066"
+    },
+    {
+      "id": "gxworks2_structured_ag",
+      "file": "sources/SH-080781ENG-AG_GXWorks2_Structured_Project.pdf",
+      "manual_number": "SH-080781ENG",
+      "revision": "AG",
+      "published": "2023-05",
+      "title": "GX Works2 Version 1 Operating Manual (Structured Project)",
+      "language": "en",
+      "manual_type": "gxworks2_structured",
+      "plc_models": ["FX3G", "FX3U", "FX3UC"],
+      "priority": 72,
+      "official_url": "https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh080781eng/sh080781engag.pdf",
+      "sha256": "1553a2b626484469514f522654040cd7d850fcb3d314c98467d7667541c55d83"
+    },
+    {
+      "id": "structured_fundamentals_o",
+      "file": "sources/SH-080782ENG-O_Structured_Fundamentals.pdf",
+      "manual_number": "SH-080782ENG",
+      "revision": "O",
+      "published": "2018-09",
+      "title": "MELSEC-Q/L/F Structured Programming Manual (Fundamentals)",
+      "language": "en",
+      "manual_type": "structured_fundamentals",
+      "plc_models": ["FX3G", "FX3U", "FX3UC"],
+      "priority": 68,
+      "official_url": "https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh080782eng/sh080782engo.pdf",
+      "sha256": "70984a5793c26073988d9c1929f57134fb170a901746ecc7a34b737bbafdfc3c"
+    }
+  ]
+}

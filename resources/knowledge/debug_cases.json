@@ -1,0 +1,291 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "motion_m8029_adjacent",
+      "title": "PLSY/DRVI 已执行但完成步骤偶发不跳转",
+      "symptom": "定位或脉冲指令动作完成后，后续状态偶尔不切换，或多个轴共用完成标志时误判。",
+      "root_cause": "M8029 是被监控应用指令的执行完成标志；多个相关指令或其他会改变该标志的指令之间若隔开处理，会失去归属。",
+      "checks": ["确认 M8029 判断与对应 PLSY/DRVI/DRVA 指令处于同一逻辑区域", "检查两个运动指令是否在同一扫描周期竞争 M8029", "在线观察请求位、M8029 与状态寄存器的扫描顺序"],
+      "fix": "为每个动作建立独立请求位，并让对应指令与其 M8029 完成处理保持紧邻或同一 rung 的关联分支。",
+      "entities": ["PLSY", "DRVI", "DRVA", "M8029"],
+      "tasks": ["debug", "program_review"],
+      "source_refs": ["JY997D16601:6.5.2", "JY997D16601:FNC57"]
+    },
+    {
+      "id": "motion_wrong_output_type",
+      "title": "脉冲指令逻辑成立但 Y 输出没有脉冲",
+      "symptom": "PLSY/DRVI 条件成立，普通监控可见指令执行，但伺服驱动器没有收到脉冲。",
+      "root_cause": "高速脉冲输出要求可用的晶体管输出及受支持的高速输出端子；继电器输出型或错误 Y 端子不能完成该用途。",
+      "checks": ["核对 CPU 完整型号和输出形式", "确认输出端子处于该型号支持的高速脉冲范围", "检查驱动器脉冲/方向接线与公共端"],
+      "fix": "按实际 CPU 手册选择受支持的晶体管高速输出端，并同步修改程序地址与接线。",
+      "entities": ["PLSY", "DRVI", "Y000", "Y001"],
+      "tasks": ["analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16601:FNC57"]
+    },
+    {
+      "id": "plsy_zero_is_continuous",
+      "title": "PLSY K0 被误认为不输出",
+      "symptom": "程序使用 PLSY 的脉冲数 K0，希望连续输出，却被评审认定参数缺失或无动作。",
+      "root_cause": "在 PLSY 语义中，脉冲数量为 0 用于连续脉冲输出，不等同于未配置。",
+      "checks": ["确认频率操作数有效", "确认停止连续输出的条件明确", "检查输出端和完成标志的使用是否符合连续模式"],
+      "fix": "保留 K0 连续输出语义，并为停止条件和状态复位建立明确逻辑；不要自动把 K0 改成非零脉冲数。",
+      "entities": ["PLSY", "K0"],
+      "tasks": ["debug", "program_review"],
+      "source_refs": ["JY997D16601:FNC57"]
+    },
+    {
+      "id": "set_rst_multiple_writers_normal",
+      "title": "同一地址多处 SET/RST 被误报为双线圈",
+      "symptom": "保持位在多个业务条件下 SET，并在停止、完成或故障条件下 RST，评审却报告重复线圈。",
+      "root_cause": "SET/RST 是保持与解除保持的指令语义，多处使用本身不等于普通 OUT 双线圈；需要分析扫描优先级而不是仅计数。",
+      "checks": ["区分 OUT/COIL 与 SET/RST", "确认同一扫描同时成立时最终优先级", "检查是否存在普通线圈与 SET/RST 混用"],
+      "fix": "保留合理的多条件 SET/RST；只有存在普通线圈混用或可证明的同扫矛盾时才报告冲突。",
+      "entities": ["SET", "RST", "OUT"],
+      "tasks": ["debug", "program_review"],
+      "source_refs": ["JY997D16601:SET/RST"]
+    },
+    {
+      "id": "counter_hmi_write_only",
+      "title": "INC C1 仅供 HMI 读取被误报未使用",
+      "symptom": "PLC 程序只更新计数器或寄存器，值由 HMI/SCADA 读取，静态评审报告变量没有梯形图读操作。",
+      "root_cause": "PLC 侧写入、外部 HMI 侧消费是有效的数据流；缺少 PLC 内部读取并不能证明无用。",
+      "checks": ["确认 HMI 标签映射", "核对数值宽度、保持范围和清零职责", "检查外部读取周期是否满足需求"],
+      "fix": "将外部消费关系记录为接口契约；除非确认规格要求 PLC 内部消费或清零，否则不报未读取。",
+      "entities": ["INC", "C1", "HMI", "SCADA"],
+      "tasks": ["debug", "program_review"],
+      "source_refs": ["JY997D16601:INC"]
+    },
+    {
+      "id": "counter_reset_responsibility",
+      "title": "计数器没有 RST 不一定是缺陷",
+      "symptom": "评审发现 C 软元件没有复位指令并直接判错。",
+      "root_cause": "复位职责可能由上电初始化、外部命令、配方切换或持续累计需求决定，必须以确认规格为准。",
+      "checks": ["确认计数是否要求跨周期累计", "检查 HMI 是否提供清零命令", "确认停机、换批和上电时的期望"],
+      "fix": "只有确认规格定义了清零事件且程序未实现时才报告缺陷。",
+      "entities": ["C", "RST", "M8002"],
+      "tasks": ["debug", "program_review"],
+      "source_refs": ["JY997D16601:counter"]
+    },
+    {
+      "id": "s1_s2_operand_not_state_relay",
+      "title": "指令表中的 S1/S2 被误识别为状态继电器",
+      "symptom": "解析 PLSY、MOV、CMP 等指令说明时，S1/S2 被写入 device 表并当作实际 S 软元件。",
+      "root_cause": "指令格式中的 S1/S2 是源操作数占位符；只有在程序语句或状态继电器章节中作为具体地址使用时才是 S 软元件。",
+      "checks": ["检查上下文是否包含 Operand Type/Set data", "确认 S1/S2 是否位于指令格式或 operand 表", "具体程序中的 SET S1、LD S1 才按状态继电器处理"],
+      "fix": "实体识别增加上下文分类：instruction operand 优先标记 operand_placeholder，明确状态继电器语境才标记 device。",
+      "entities": ["S1", "S2", "operand", "state relay"],
+      "tasks": ["debug", "program_review", "analysis"],
+      "source_refs": ["JY997D16601:instruction format", "JY997D26001:state relay"]
+    },
+    {
+      "id": "dplsy_register_pair_overlap",
+      "title": "DPLSY 32 位操作数寄存器对重叠",
+      "symptom": "DPLSY、DMOV 或其他 32 位操作使用相邻 D 寄存器组成双字，但另一个变量占用了高字。",
+      "root_cause": "32 位数据使用连续两个 16 位字；只检查首地址会漏掉 Dn+1 的隐式占用。",
+      "checks": ["展开所有 32 位指令的隐式寄存器对", "检查索引修饰后的实际地址", "核对 HMI 数据类型与字序"],
+      "fix": "把 32 位变量作为不可拆分区间分配，重排重叠地址并同步 HMI 映射。",
+      "entities": ["DPLSY", "DMOV", "D"],
+      "tasks": ["debug", "program_review"],
+      "source_refs": ["JY997D16601:32-bit operation"]
+    },
+    {
+      "id": "timer_scan_reset",
+      "title": "定时器到时后下一状态反复触发",
+      "symptom": "状态机进入下一步后，前一步定时器触点仍在同一扫描周期成立，造成重复迁移或并发动作。",
+      "root_cause": "定时器线圈条件、当前状态更新和触点判断的扫描顺序没有形成清晰所有权。",
+      "checks": ["查看定时器线圈是否由单一状态驱动", "确认状态更新后旧条件何时失效", "检查同一扫描多条迁移是否可能同时成立"],
+      "fix": "用单一状态条件驱动定时器，并为迁移建立明确优先级；必要时使用一步一迁移或脉冲边沿。",
+      "entities": ["T", "OUT", "state machine"],
+      "tasks": ["debug", "program_review"],
+      "source_refs": ["JY997D16601:timer"]
+    },
+    {
+      "id": "timer_m8000_not_oscillator",
+      "title": "M8000 常通驱动普通定时器不能形成闪烁",
+      "symptom": "程序使用 M8000 驱动 T 定时器，再用定时器触点驱动闪烁位；第一次到时后输出一直保持，不再周期翻转。",
+      "root_cause": "M8000 在 PLC RUN 期间持续 ON。普通定时器到达设定值后，只要使能路径不变为 OFF，完成触点就保持 ON，因此没有下一周期的复位条件。",
+      "checks": ["确认定时器使能是否只有 M8000 常通触点", "检查 T 触点到时后哪条逻辑会让定时器线圈失电", "区分上电延时、状态阶段延时与周期振荡三种用途"],
+      "fix": "上电延时可保留 M8000；状态阶段延时由状态退出使其复位；周期匹配时使用 M8011-M8014，其他周期必须建立明确的使能断开/复位路径。",
+      "entities": ["M8000", "T", "M8013", "oscillator"],
+      "tasks": ["generate", "analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16601:4.5.2", "JY997D16601:4.5.5", "JY997D16601:37.2.6"]
+    },
+    {
+      "id": "timer_enable_off_reset_semantics",
+      "title": "普通定时器需要使能 OFF 才会复位",
+      "symptom": "定时器已经到时，程序希望重新计时，但当前值和完成触点没有恢复。",
+      "root_cause": "非保持型普通定时器在驱动条件持续成立时保持到时状态；重新计时依赖驱动条件断开，而不是重复执行同一个常通梯级。",
+      "checks": ["在线观察定时器线圈使能是否实际变为 OFF", "检查状态跳转或运行位复位是否能切断该梯级", "确认没有只保持一个扫描周期的边沿使能"],
+      "fix": "让使能在计时期间持续成立，并在重启计时前明确变为 OFF；脉冲触发需求先锁存运行条件，阶段延时由状态条件统一拥有。",
+      "entities": ["T", "timer", "reset", "OFF"],
+      "tasks": ["generate", "analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16601:4.5.2", "JY997D16601:4.5.5"]
+    },
+    {
+      "id": "timer_time_base_by_device_range",
+      "title": "定时器设定值必须结合 T 编号的时间基准",
+      "symptom": "程序直接把秒数换成 K 值，却没有核对所选 T 编号，实际延时时间比需求快或慢十倍以上。",
+      "root_cause": "FX3U 不同定时器编号/类型可能采用不同时间基准和范围，同一个 K 常数不能脱离具体 T 软元件解释。",
+      "checks": ["先确定具体 T 地址", "查所选型号手册中的该 T 范围和时间基准", "再计算 K 设定值并核对最大值与保持属性"],
+      "fix": "把 T 地址、时间基准、目标时长和 K 值作为一组校验；不要仅凭通用经验把 10 秒固定写成某个 K 常数。",
+      "entities": ["T0", "K100", "time base", "timer"],
+      "tasks": ["generate", "analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16601:4.5.1", "JY997D16601:4.5.5"]
+    },
+    {
+      "id": "clock_relay_blink_period",
+      "title": "M8013 的完整周期是 1 秒而不是 0.5 秒",
+      "symptom": "闪烁频率被按单边 ON 时间计算，或为 0.5Hz 指示灯直接使用 M8013，导致实际频率不符。",
+      "root_cause": "M8013 为 1 秒内部时钟，ON 约 0.5 秒、OFF 约 0.5 秒，完整 ON/OFF 周期约 1 秒，对应约 1Hz；0.5Hz 需要约 2 秒完整周期。",
+      "checks": ["区分完整周期与 ON 持续时间", "核对所需频率还是闪烁边沿次数", "确认 M8011-M8014 中是否有直接匹配的周期"],
+      "fix": "1Hz 闪烁可直接串联 M8013；0.5Hz 等不直接匹配的周期使用经过验证的分频/交替状态或显式定时器振荡逻辑。",
+      "entities": ["M8013", "M8011", "M8012", "M8014"],
+      "tasks": ["generate", "analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16601:37.2.6"]
+    },
+    {
+      "id": "timer_counter_schema_confusion",
+      "title": "生成协议不能用 TIMER 类型表示 C 计数器",
+      "symptom": "JSON 中 C1 被标成 TIMER，后续评审把脉冲计数当成需要持续使能的定时器并产生误报。",
+      "root_cause": "旧协议把定时器和计数器共用同一个输出类型，虽然导出都可能成为 OUT 指令，但丢失了 T 与 C 的语义边界。",
+      "checks": ["检查 TIMER 地址是否全部为 T", "检查 COUNTER 地址是否全部为 C", "旧项目载入时先做兼容转换再评审"],
+      "fix": "新协议使用 TIMER+T 和 COUNTER+C；旧版 TIMER+C 自动转换为 COUNTER，评审按计数器脉冲语义处理。",
+      "entities": ["TIMER", "COUNTER", "T", "C"],
+      "tasks": ["generate", "debug", "program_review"],
+      "source_refs": ["JY997D16601:4.5", "JY997D16601:4.6"]
+    },
+    {
+      "id": "initial_pulse_model_scope",
+      "title": "FX3U 与 FX5U 初始脉冲地址混用",
+      "symptom": "FX3U 项目生成了 SM8002，或 FX5U 项目沿用了 M8002。",
+      "root_cause": "不同系列的特殊软元件命名空间不能跨型号直接复用。",
+      "checks": ["确认当前 PLC 系列", "核对特殊继电器前缀", "检查缓存提示词或历史程序是否来自另一型号"],
+      "fix": "按当前型号手册隔离知识源与特殊软元件；FX3U 使用 M 系列规则，FX5U 使用对应 SM/SD 规则。",
+      "entities": ["M8002", "SM8002", "FX3U", "FX5U"],
+      "tasks": ["analysis", "debug", "program_review"],
+      "source_refs": ["JY997D26001:special device"]
+    },
+    {
+      "id": "hsc_frequency_budget",
+      "title": "单路高速计数频率满足但综合频率超限",
+      "symptom": "每个高速计数输入单独看都在规格内，多路同时运行时出现漏计数。",
+      "root_cause": "高速计数器除了单路响应频率，还可能受同时使用通道的综合频率和输入分配限制。",
+      "checks": ["核对每路输入端与计数器分配", "计算同时工作的综合频率", "检查滤波和 2 相/4 边沿设置"],
+      "fix": "按型号限制重新分配通道或降低输入频率，并把综合频率作为设计约束记录。",
+      "entities": ["high-speed counter", "C251", "frequency"],
+      "tasks": ["analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16601:high-speed counter"]
+    },
+    {
+      "id": "rs_completion_flags",
+      "title": "RS/RS2 通信完成位使用错误",
+      "symptom": "串行通信发送后一直等待，或接收缓冲区在数据未完成时被读取。",
+      "root_cause": "发送请求、接收完成和错误状态的特殊继电器职责被混淆，或请求位没有按规定保持/复位。",
+      "checks": ["确认使用 RS 还是 RS2", "核对发送请求与接收完成特殊继电器", "检查通信参数、帧长度和超时"],
+      "fix": "按当前型号及指令手册建立发送状态机，分离请求、完成、错误和超时处理。",
+      "entities": ["RS", "RS2", "M8122", "M8123"],
+      "tasks": ["debug", "program_review"],
+      "source_refs": ["JY997D16601:RS"]
+    },
+    {
+      "id": "index_register_hidden_address",
+      "title": "V/Z 索引导致运行时地址越界或重叠",
+      "symptom": "静态地址表没有冲突，但在线运行到特定索引值时覆盖其他数据。",
+      "root_cause": "索引修饰后的实际地址取决于 V/Z 当前值，不能只按字面基地址检查。",
+      "checks": ["计算索引上下界", "展开可能访问的实际地址区间", "检查索引复位和负值/溢出"],
+      "fix": "为索引访问声明边界与保留区间，并在写入前限制 V/Z 的合法范围。",
+      "entities": ["V", "Z", "index register"],
+      "tasks": ["debug", "program_review"],
+      "source_refs": ["JY997D26001:index register"]
+    },
+    {
+      "id": "error_code_context",
+      "title": "错误码检索只命中目录或无关系列",
+      "symptom": "输入具体错误码后，检索返回错误章节目录而不是原因和处理表。",
+      "root_cause": "错误码没有结构化索引，或仅依赖全文 BM25，导致高频目录页排名过高。",
+      "checks": ["优先查询 error_records", "核对 PLC 型号和手册范围", "确认结果包含 cause/action 字段"],
+      "fix": "对错误码建立规范化实体与结构化记录，并在 reranker 中提升包含原因和处理措施的表格行。",
+      "entities": ["error code", "cause", "corrective action"],
+      "tasks": ["debug"],
+      "source_refs": ["JY997D26001:Errors"]
+    },
+    {
+      "id": "structured_label_device_confusion",
+      "title": "GX Works2 标签名被误当作实际软元件",
+      "symptom": "结构化工程中的标签在评审时被当作 X/Y/M/D 地址参与占用与冲突检查。",
+      "root_cause": "标签是符号层，是否映射到实际软元件取决于标签类型与分配；名称本身不是设备地址。",
+      "checks": ["区分全局/局部标签", "检查是否有实际设备分配", "确认数据类型与保持属性"],
+      "fix": "结构化工程先解析标签声明与分配，再把有明确设备映射的标签纳入地址占用。",
+      "entities": ["GX Works2", "label", "structured project"],
+      "tasks": ["analysis", "debug", "program_review"],
+      "source_refs": ["SH-080781ENG:labels", "SH-080782ENG:structured project"]
+    },
+    {
+      "id": "st_timer_contact_names",
+      "title": "ST 定时器线圈与触点变量混用",
+      "symptom": "结构化程序把定时器实例、当前值和完成触点当成同一个布尔变量。",
+      "root_cause": "GX Works2/FXCPU 的结构化指令和设备表示有明确的数据类型与调用形式，不能照搬普通梯形图符号。",
+      "checks": ["核对定时器调用形式", "检查完成触点/实例的数据类型", "确认预置值单位"],
+      "fix": "按 FXCPU Structured Programming Manual 的类型和调用语法生成 ST，并保持实例、触点和数值语义分离。",
+      "entities": ["ST", "timer", "GX Works2"],
+      "tasks": ["generate", "debug", "program_review"],
+      "source_refs": ["JY997D34701:timer", "SH-080782ENG:ST"]
+    },
+    {
+      "id": "motion_m8336_not_home_done",
+      "title": "M8336 被误当作回原点完成位",
+      "symptom": "ZRN/DSZR 已执行，但程序用 M8336 结束请求或进入下一步，导致流程不动作或状态错误。",
+      "root_cause": "M8336/D8336 用于 DVIT 中断输入信号设备变更，不是 ZRN/DSZR 的完成标志。",
+      "checks": ["检查所有 M8336 触点和注释", "确认 M8029 与对应回零指令处于同一关联逻辑", "核对对应轴 BUSY 和驱动器定位完成输入的职责"],
+      "fix": "删除 M8336 回零完成语义；用与 ZRN/DSZR 关联的 M8029 处理 PLC 指令完成，机械到位要求则使用已确认的驱动器定位完成输入。",
+      "entities": ["M8336", "D8336", "DVIT", "ZRN", "DSZR", "M8029"],
+      "tasks": ["analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16801:4.3.7", "JY997D16801:6"]
+    },
+    {
+      "id": "motion_direction_pair_false_positive",
+      "title": "方向输出不是固定 Y+4 配对",
+      "symptom": "DRVI/DRVA/DSZR 使用了已确认且合法的方向输出，但评审因为不是 Y0→Y4、Y1→Y5、Y2→Y6 而报错。",
+      "root_cause": "FX 定位指令的方向输出是独立操作数，并不存在按脉冲轴强制加 4 的固定映射。",
+      "checks": ["确认方向操作数是合法 Y 地址", "确认方向输出不与脉冲输出或其他输出冲突", "核对驱动器 PUL/DIR 接线和有效电平"],
+      "fix": "校验任意已确认的合法且不冲突 Y 输出，不再推导固定 Y+4；Y4/Y5/Y6 仅可作为示例。",
+      "entities": ["DRVI", "DRVA", "DSZR", "Y0", "Y4"],
+      "tasks": ["analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16801:positioning direction signal", "Mitsubishi FAQ 24975"]
+    },
+    {
+      "id": "motion_d834x_parameter_roles",
+      "title": "D8342-D8349 定位参数角色混淆",
+      "symptom": "程序把 D8343 当 16 位基础速度、把 D8345 当最高速度，或把 D8348 同时当作加减速时间。",
+      "root_cause": "Y0 定位参数中 D8342 是偏置速度，D8343/D8344 是 32 位最高速度，D8345 是回零爬行速度，D8348/D8349 分别是加速和减速时间。",
+      "checks": ["检查 D8343 是否用 DMOV 等 32 位写入", "核对 D8345 是否仅按回零爬行速度使用", "确认 D8348 与 D8349 分开设置"],
+      "fix": "按官方定位参数表修正寄存器和数据宽度，并同步修改注释、生成示例与评审规则。",
+      "entities": ["D8342", "D8343", "D8344", "D8345", "D8348", "D8349", "DMOV"],
+      "tasks": ["analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16801:4.2", "JY997D16801:4.5.1"]
+    },
+    {
+      "id": "motion_instruction_done_vs_in_position",
+      "title": "PLC 指令完成不等于伺服机械停止",
+      "symptom": "M8029 或 BUSY 已结束后立即夹紧、加工或切换机构，但伺服轴仍可能处于减速或驱动器未给出定位完成。",
+      "root_cause": "PLC 侧指令/脉冲完成状态与伺服放大器的定位完成、机械静止信号不是同一接口契约。",
+      "checks": ["区分 M8029、轴 BUSY、定位指令驱动中和驱动器 INP 信号", "核对驱动器定位完成输入地址与有效电平", "确认后续动作是否要求真实机械到位"],
+      "fix": "仅用 M8029 结束指令请求；需要机械到位的流程再等待已确认的驱动器定位完成输入。",
+      "entities": ["M8029", "M8340", "M8348", "servo in-position"],
+      "tasks": ["analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16801:4.7.4"]
+    },
+    {
+      "id": "motion_positioning_module_conditional",
+      "title": "定位模块型号被通用硬件过滤器误删",
+      "symptom": "分析已选择 FX3U-2HSY-ADP、FX3U-1PG 或 FX2N-10PG 方案，但确认表删除了模块型号，生成阶段又按基本单元内置脉冲规则编程。",
+      "root_cause": "通用 PLC 扩展模块清单与当前方案依赖的定位模块型号被错误归为同一参数。",
+      "checks": ["确认采用基本单元内置输出还是外接定位/高速输出模块", "核对模块型号对应的轴数、频率和编程接口", "检查 required_when 是否引用运动控制实现方式"],
+      "fix": "通用模块清单保持非必填；只有选中外接定位方案时才条件要求 positioning_module_model，并按该模块手册生成。",
+      "entities": ["FX3U-2HSY-ADP", "FX3U-1PG", "FX2N-10PG", "positioning module"],
+      "tasks": ["analysis", "debug", "program_review"],
+      "source_refs": ["JY997D16801:1.2", "JY997D16801:4.5.2"]
+    }
+  ]
+}

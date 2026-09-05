@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "benchmark_cases": 220,
+  "before_dense": {
+    "recall_at_1": 0.8137,
+    "recall_at_5": 0.9951,
+    "recall_at_10": 1.0,
+    "mrr": 0.8821,
+    "negative_accuracy": 1.0,
+    "latency_p95_ms": 112.299
+  },
+  "hybrid_dense": {
+    "recall_at_1": 0.8627,
+    "recall_at_5": 0.9804,
+    "recall_at_10": 1.0,
+    "mrr": 0.9033,
+    "negative_accuracy": 1.0,
+    "latency_p95_ms": 88.145
+  },
+  "assessment": "Dense hybrid improved first-result accuracy and MRR while preserving complete Top-10 recall and negative-query rejection."
+}
