@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "status": "experimental",
+  "scope": {
+    "software": "GX Works2",
+    "plc_family": "FX3U",
+    "source": "controlled reverse-engineering samples",
+    "date": "2026-09-05"
+  },
+  "warnings": [
+    "Do not treat numeric stream IDs as stable. Resolve logical names from project metadata.",
+    "Observed Program.pou offsets are sample-layout observations, not proven universal format invariants.",
+    "This registry is intended for a read-only parser first. Direct GXW writing requires more reverse engineering."
+  ],
+  "container": {
+    "outer_format": "CFB/OLE",
+    "nested_container": "_hdb",
+    "observed_logical_files": {
+      "12": "MAIN.res",
+      "16": "MAIN.Program.pou",
+      "19": "COMMENT.qcd",
+      "37": "ESCompiler.stg",
+      "39": "Gppw2.gpj"
+    },
+    "logical_file_resolution": "project metadata such as history.xml/projectdatalist.xml"
+  },
+  "program_pou": {
+    "observed_token_stream_offset_hex": "0x4F",
+    "observed_systemtime_offset_hex": "0x22",
+    "observed_length_field_offsets_hex": [
+      "0x37",
+      "0x3B"
+    ],
+    "observed_length_field_relation": "token_stream_length + 20",
+    "observed_trailer_zero_bytes": 24,
+    "token_framing": "leading and trailing token-length byte match"
+  },
+  "operand_types": {
+    "M": {
+      "type_hex": "0x90",
+      "semantic": "bit_device"
+    },
+    "X": {
+      "type_hex": "0x9C",
+      "semantic": "input_device",
+      "display_radix_note": "FX-series octal address is serialized as parsed numeric value"
+    },
+    "Y": {
+      "type_hex": "0x9D",
+      "semantic": "output_device"
+    },
+    "D": {
+      "type_hex": "0xA8",
+      "semantic": "data_register"
+    },
+    "K16": {
+      "type_hex": "0xE8",
+      "semantic": "decimal_constant_16bit_context"
+    },
+    "K32": {
+      "type_hex": "0xE9",
+      "semantic": "decimal_constant_32bit_context"
+    },
+    "H": {
+      "type_hex": "0xEA",
+      "semantic": "hexadecimal_constant"
+    }
+  },
+  "operand_examples": {
+    "X1": "04 9C 01 04",
+    "X2": "04 9C 02 04",
+    "X10": "04 9C 08 04",
+    "X100": "04 9C 40 04",
+    "M1": "04 90 01 04",
+    "Y1": "04 9D 01 04",
+    "D1": "04 A8 01 04",
+    "D10": "04 A8 0A 04",
+    "D255": "04 A8 FF 04",
+    "D256": "05 A8 00 01 05",
+    "K10": "04 E8 0A 04",
+    "K11": "04 E8 0B 04",
+    "K255": "04 E8 FF 04",
+    "K256": "05 E8 00 01 05",
+    "MOV_K_NEG1": "05 E8 FF FF 05",
+    "DMOV_K1": "04 E9 01 04",
+    "DMOV_K32767": "05 E9 FF 7F 05",
+    "DMOV_K32768": "05 E9 00 80 05",
+    "DMOV_K_NEG1": "07 E9 FF FF FF FF 07",
+    "H10": "04 EA 10 04"
+  },
+  "basic_instructions": {
+    "LD": {
+      "opcode_hex": "0x00",
+      "token": "03 00 03"
+    },
+    "OUT": {
+      "opcode_hex": "0x20",
+      "token": "03 20 03"
+    },
+    "SET": {
+      "opcode_hex": "0x23",
+      "token": "03 23 03"
+    },
+    "RST": {
+      "opcode_hex": "0x24",
+      "token": "03 24 03"
+    },
+    "END": {
+      "opcode_hex": "0x34",
+      "token": "03 34 03"
+    }
+  },
+  "application_header": {
+    "shape": "05 FAMILY WIDTH_DESCRIPTOR SUBTYPE 05",
+    "verified_width_descriptor_relation": "1 + 2 * total_operand_word_slots"
+  },
+  "application_families": {
+    "0x49": {
+      "name": "arithmetic",
+      "observations": {
+        "ADD": "05 49 07 28 05",
+        "SUB": "05 49 07 2A 05",
+        "MUL": "05 49 07 2C 05",
+        "DIV": "05 49 07 2E 05",
+        "DADD": "05 49 0D 29 05",
+        "DSUB": "05 49 0D 2B 05"
+      },
+      "verified_for_tested_members": "subtype = FNC_number * 2 + D_modifier"
+    },
+    "0x4A": {
+      "name": "inc_dec",
+      "observations": {
+        "INC": "05 4A 03 00 05",
+        "DEC": "05 4A 03 02 05"
+      },
+      "family_relative_formula_status": "hypothesis"
+    },
+    "0x4C": {
+      "name": "move",
+      "observations": {
+        "MOV": "05 4C 05 00 05",
+        "DMOV": "05 4C 09 01 05",
+        "BMOV": "05 4C 07 06 05"
+      },
+      "family_relative_formula_status": "strong_hypothesis"
+    }
+  },
+  "comments": {
+    "logical_file": "COMMENT.qcd",
+    "program_pou_changes_when_only_device_comment_changes": false,
+    "observed_comment_sample": {
+      "device": "X1",
+      "comment": "1",
+      "text_encoding_evidence": "31 00 (UTF-16LE)"
+    },
+    "schema_status": "not_decoded"
+  },
+  "duplication": {
+    "MAIN.res": "observed to contain a byte-identical copy of the Program.pou instruction token stream in controlled samples"
+  },
+  "next_samples": [
+    "37_SERIES_X1_M1_Y1.gxw",
+    "38_PARALLEL_X1_X2_Y1.gxw",
+    "39_NC_X1_Y1.gxw",
+    "40_SERIES_X1_NC_M1_Y1.gxw",
+    "41_TIMER_T0_K10.gxw",
+    "42_COUNTER_C0_K10.gxw"
+  ]
+}
