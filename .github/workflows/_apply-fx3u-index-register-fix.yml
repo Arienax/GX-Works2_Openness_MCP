@@ -19,6 +19,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Repair staged patch script newline escaping
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("tools/_patch_fx3u_index_registers.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              "'''\\n    path.write_text(content, encoding=\"utf-8\")\\n",
+              "'''\n    path.write_text(content, encoding=\"utf-8\")\n",
+          )
+          path.write_text(text, encoding="utf-8")
+          PY
       - name: Apply deterministic source patch
         run: python tools/_patch_fx3u_index_registers.py
       - name: Install pytest
