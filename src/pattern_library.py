@@ -498,9 +498,9 @@ class KnowledgeRouter:
         if task_type in {"review", "program_review", "debug"}:
             bundles.append("output_ownership")
             bundles.append("debugging" if task_type == "debug" else "review")
-        if task_type in {"generate", "edit", "repair", "debug_fix"}:
+        if task_type in {"generate", "edit", "repair", "debug_fix", "contract_repair"}:
             bundles.extend(["io_mapping", "output_ownership", "scan_semantics"])
-        if task_type in {"repair", "debug_fix"}:
+        if task_type in {"repair", "debug_fix", "contract_repair"}:
             bundles.append("debugging")
         if task_type == "io_mapping":
             bundles.append("io_mapping")

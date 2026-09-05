@@ -21,6 +21,10 @@ _DEVICE_TOKEN_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:SM|SD|TS|TC|CS|CC|[XYMSTCDRVZ])\d+(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
+_INDEXED_DEVICE_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?P<base>(?:SM|SD|[XYMSTCDR])\d+)(?P<index>[VZ]\d+)(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 _STATE_COMPARE_RE = re.compile(
     r"(?:^|\s)(?:=|==)\s*(D\d+)\s*K[+-]?\d+(?:\s|$)",
     re.IGNORECASE,
@@ -98,7 +102,13 @@ def structured_contract_violations(ladder, confirmed_spec):
 
 
 def _devices_in_value(value):
-    return {item.upper() for item in _DEVICE_TOKEN_RE.findall(str(value or ""))}
+    text = str(value or "")
+    devices = {item.upper() for item in _DEVICE_TOKEN_RE.findall(text)}
+    for match in _INDEXED_DEVICE_TOKEN_RE.finditer(text):
+        base = match.group("base").upper()
+        index = match.group("index").upper()
+        devices.update({base + index, base, index})
+    return devices
 
 
 def _walk_elements(elements):
@@ -298,12 +308,17 @@ def build_contract_repair_plan(
     allowed_rung_ids, scope_reasons, fallback_scope = _scope_for_contract(
         ladder, confirmed_spec, violations, features
     )
-    existing_addresses = set(features.get("devices") or [])
-    existing_addresses.update(
-        str(addr).strip().upper()
-        for addr in ((ladder or {}).get("device_comments") or {})
-        if str(addr).strip()
-    )
+    # Device scope follows the selected evidence rungs rather than the
+    # entire program.  This prevents the model from borrowing an unrelated
+    # address merely because that address exists elsewhere in the project.
+    existing_addresses = set()
+    allowed_rung_id_set = set(allowed_rung_ids)
+    for rung in (ladder or {}).get("rungs") or []:
+        if not isinstance(rung, Mapping):
+            continue
+        if rung.get("rung_id") is None or int(rung.get("rung_id")) not in allowed_rung_id_set:
+            continue
+        existing_addresses.update(_rung_devices(rung))
     existing_addresses.update(
         str(item).strip().upper()
         for item in contract.get("required_devices") or []

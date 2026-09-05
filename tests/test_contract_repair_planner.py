@@ -184,3 +184,38 @@ def test_main_integrates_contract_repair_as_scoped_partial_patch():
     assert "allowed_rung_ids=plan[\"allowed_rung_ids\"]" in source
     assert "allowed_addresses=plan[\"allowed_addresses\"]" in source
     assert "方案约束修复候选未通过验证，不会继续隐藏重试" in source
+
+
+def test_indexed_devices_are_enforced_by_patch_scope():
+    partial = {
+        "mode": "partial",
+        "rungs": [
+            {
+                "rung_id": 1,
+                "header_element": None,
+                "shared_inputs": [],
+                "branches": [
+                    {
+                        "branch_id": 1,
+                        "y_offset_level": 0,
+                        "inputs": [{"type": "NO", "address": "X0"}],
+                        "outputs": [
+                            {
+                                "type": "APP_INSTR",
+                                "opcode": "MOV",
+                                "operands": ["D0", "D100Z0"],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    addresses = patch_device_addresses(partial)
+    assert {"X0", "D0", "D100Z0", "D100", "Z0"}.issubset(addresses)
+
+
+def test_contract_repair_router_gets_repair_safety_bundles():
+    source = Path("src/pattern_library.py").read_text(encoding="utf-8")
+    assert '"contract_repair"' in source
+    assert '"repair", "debug_fix", "contract_repair"' in source
