@@ -19,6 +19,8 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Set, Tuple
 
+from instruction_registry import DEFAULT_INSTRUCTION_REGISTRY
+
 
 IR_KIND = "plc_program_ir"
 IR_SCHEMA_VERSION = 3
@@ -29,148 +31,6 @@ _DEVICE_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _REVISION_RE = re.compile(r"(\d+)$")
-
-
-# Known local-device write operands.  Instructions not listed here are kept
-# conservative: their device operands are treated as reads, never guessed as
-# writes.  This table is intentionally independent from the JSON validator so
-# the IR can be used by validators without an import cycle.
-_WRITE_OPERAND_INDEXES: Dict[str, Tuple[int, ...]] = {
-    "SET": (0,),
-    "RST": (0,),
-    "MOV": (1,),
-    "DMOV": (1,),
-    "EMOV": (1,),
-    "BMOV": (1,),
-    "FMOV": (1,),
-    "ADD": (2,),
-    "DADD": (2,),
-    "EADD": (2,),
-    "DEADD": (2,),
-    "SUB": (2,),
-    "DSUB": (2,),
-    "ESUB": (2,),
-    "DESUB": (2,),
-    "MUL": (2,),
-    "DMUL": (2,),
-    "EMUL": (2,),
-    "DEMUL": (2,),
-    "DIV": (2,),
-    "DDIV": (2,),
-    "EDIV": (2,),
-    "DEDIV": (2,),
-    "WAND": (2,),
-    "WOR": (2,),
-    "WXOR": (2,),
-    "CMP": (2,),
-    "DCMP": (2,),
-    "ZCP": (3,),
-    "DZCP": (3,),
-    "SFTL": (1,),
-    "SFTLP": (1,),
-    "SFTR": (1,),
-    "SFTRP": (1,),
-    "INC": (0,),
-    "DINC": (0,),
-    "DEC": (0,),
-    "DDEC": (0,),
-    "NEG": (0,),
-    "DNEG": (0,),
-    "FLT": (1,),
-    "DFLT": (1,),
-    "INT": (1,),
-    "DINT": (1,),
-    "FROM": (2,),
-    "DFROM": (2,),
-    # RD3A/RD3AP operands are m1, m2, D; D is the third operand.
-    "RD3A": (2,),
-    "RD3AP": (2,),
-    "PID": (3,),
-    "HSCS": (2,),
-    "HSCR": (2,),
-    "HSZ": (3,),
-    "DHSZ": (3,),
-    "CML": (1,),
-    "DCML": (1,),
-    "XCH": (0, 1),
-    "DXCH": (0, 1),
-    "SWAP": (0,),
-    "BCD": (1,),
-    "DBCD": (1,),
-    "BIN": (1,),
-    "DBIN": (1,),
-    "GRY": (1,),
-    "DGRY": (1,),
-    "GBIN": (1,),
-    "DGBIN": (1,),
-    "ROR": (0,),
-    "ROL": (0,),
-    "RCR": (0,),
-    "RCL": (0,),
-    "DROR": (0,),
-    "DROL": (0,),
-    "DRCR": (0,),
-    "DRCL": (0,),
-    "WSFR": (1,),
-    "WSFL": (1,),
-    "SORT": (1,),
-    "DSORT": (1,),
-    "SUM": (1,),
-    "DSUM": (1,),
-    "MEAN": (1,),
-    "DMEAN": (1,),
-    "RAMP": (2,),
-    "DRAMP": (2,),
-    "ROTC": (0,),
-    "RS": (2,),
-    "RS2": (2,),
-    "ECMP": (2,),
-    "DECMP": (2,),
-    "EZCP": (3,),
-    "DEZCP": (3,),
-    "SPD": (2,),
-    "PLSY": (2,),
-    "DPLSY": (2,),
-    "PLSR": (3,),
-    "DPLSR": (3,),
-    "PLSV": (1,),
-    "DRVI": (2, 3),
-    "DDRVI": (2, 3),
-    "DRVA": (2, 3),
-    "DDRVA": (2, 3),
-    "ZRN": (3,),
-    "DSZR": (2, 3),
-    "PWM": (2,),
-}
-
-# These destinations depend on their previous value and therefore participate
-# in both sides of the dependency graph.
-_READ_WRITE_TARGETS: Dict[str, Tuple[int, ...]] = {
-    "INC": (0,),
-    "DINC": (0,),
-    "DEC": (0,),
-    "DDEC": (0,),
-    "NEG": (0,),
-    "DNEG": (0,),
-    "SFTL": (1,),
-    "SFTLP": (1,),
-    "SFTR": (1,),
-    "SFTRP": (1,),
-    "XCH": (0, 1),
-    "DXCH": (0, 1),
-    "SWAP": (0,),
-    "ROR": (0,),
-    "ROL": (0,),
-    "RCR": (0,),
-    "RCL": (0,),
-    "DROR": (0,),
-    "DROL": (0,),
-    "DRCR": (0,),
-    "DRCL": (0,),
-    "WSFR": (1,),
-    "WSFL": (1,),
-    "ROTC": (0,),
-}
 
 
 class PLCIRValidationError(ValueError):
@@ -425,11 +285,20 @@ def _walk_input_elements(elements: Sequence[Mapping[str, Any]]) -> Iterable[Mapp
 
 
 def _instruction_access(opcode: Any, operands: Sequence[Any]) -> Tuple[Set[str], Set[str]]:
+    """Return conservative access semantics using the shared instruction registry.
+
+    A catalogue miss is intentionally not treated as a parse failure.  Unknown
+    vendor instructions keep all device operands on the read side and never
+    guess writes.  That makes imported GX programs preservable while avoiding
+    unsafe dependency claims.
+    """
+
     op = str(opcode or "").strip().upper()
     reads: Set[str] = set()
     writes: Set[str] = set()
-    write_indexes = set(_WRITE_OPERAND_INDEXES.get(op, ()))
-    read_write_indexes = set(_READ_WRITE_TARGETS.get(op, ()))
+    spec = DEFAULT_INSTRUCTION_REGISTRY.resolve(op)
+    write_indexes = set(spec.write_indexes if spec is not None else ())
+    read_write_indexes = set(spec.read_write_indexes if spec is not None else ())
     for index, operand in enumerate(operands or []):
         tokens = set(_device_tokens(operand))
         if index in write_indexes:
@@ -738,6 +607,7 @@ def validate_plc_ir(
     *,
     confirmed_spec: Optional[Mapping[str, Any]] = None,
     validate_ladder: bool = True,
+    require_catalogued_instructions: bool = True,
 ) -> Mapping[str, Any]:
     if not is_plc_ir(program):
         raise PLCIRValidationError(f"kind must be {IR_KIND!r}")
@@ -820,6 +690,7 @@ def validate_plc_ir(
             ladder,
             plc_model=str(plc.get("cpu", "FX3U")),
             confirmed_spec=confirmed_spec,
+            require_catalogued_instructions=require_catalogued_instructions,
         )
     return program
 
