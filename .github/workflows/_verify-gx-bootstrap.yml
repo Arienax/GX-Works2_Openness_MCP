@@ -1,0 +1,21 @@
+name: Verify GX bootstrap integration
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/_verify-gx-bootstrap.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pytest
+      - name: Syntax check
+        run: python -m py_compile src/main.py src/gxworks2/sync_service.py src/gxworks2/api.py src/gxworks2/__init__.py
+      - name: GX sync regression suite
+        run: python -m pytest -q tests/test_gxworks2_simple_bridge_ui.py tests/test_gxworks2_sync.py
