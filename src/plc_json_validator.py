@@ -19,6 +19,11 @@ DEVICE_LIMITS = {
         "T": 511,
         "C": 255,
         "S": 4095,
+        # FX3U index registers. V0-V7 are 16-bit index registers; Z0-Z7
+        # are accepted as index registers and may also be used as ordinary
+        # word operands. Indexed operands such as D100Z0 are validated below.
+        "V": 7,
+        "Z": 7,
     },
     "FX5U": {
         # The physical allocation remains configuration-dependent. 1777 is
@@ -37,9 +42,19 @@ DEVICE_LIMITS = {
     },
 }
 
-DEVICE_ADDRESS_RE = re.compile(r"^(SM|SD|X|Y|M|D|T|C|S)(\d+)$", re.IGNORECASE)
+DEVICE_ADDRESS_RE = re.compile(
+    r"^(SM|SD|X|Y|M|D|T|C|S|V|Z)(\d+)$", re.IGNORECASE
+)
+INDEXED_DEVICE_ADDRESS_RE = re.compile(
+    r"^(?P<base>(?:SM|SD|X|Y|M|D|T|C|S)\d+)(?P<index>[VZ]\d+)$",
+    re.IGNORECASE,
+)
+INDEXED_DEVICE_TOKEN_RE = re.compile(
+    r"(?<![A-Z0-9_])(?:SM|SD|X|Y|M|D|T|C|S)\d+[VZ]\d+(?![A-Z0-9_])",
+    re.IGNORECASE,
+)
 DEVICE_TOKEN_RE = re.compile(
-    r"(?<![A-Z0-9_])(?:SM|SD|X|Y|M|D|T|C|S)\d+(?![A-Z0-9_])",
+    r"(?<![A-Z0-9_])(?:SM|SD|X|Y|M|D|T|C|S|V|Z)\d+(?![A-Z0-9_])",
     re.IGNORECASE,
 )
 
@@ -302,6 +317,55 @@ def parse_device_address(value, plc_model="FX3U"):
     return prefix, index
 
 
+def parse_indexed_device_address(value, plc_model="FX3U"):
+    """Parse an FX-style indexed operand such as ``D100Z0``.
+
+    The legacy external JSON keeps the operand as a string.  This helper only
+    validates and decomposes it so the validator/IR can reason about the base
+    device and the index register without changing that interchange format.
+    """
+
+    model = normalize_plc_model(plc_model)
+    if not isinstance(value, str):
+        return None
+    match = INDEXED_DEVICE_ADDRESS_RE.fullmatch(value.strip())
+    if not match:
+        return None
+    base_text = match.group("base").upper()
+    index_text = match.group("index").upper()
+    base = parse_device_address(base_text, model)
+    index = parse_device_address(index_text, model)
+    if base is None or index is None or index[0] not in {"V", "Z"}:
+        return None
+    return {
+        "base_text": base_text,
+        "index_text": index_text,
+        "base": base,
+        "index": index,
+    }
+
+
+def _validate_indexed_device_address(value, path, plc_model="FX3U"):
+    if not isinstance(value, str):
+        return None
+    match = INDEXED_DEVICE_ADDRESS_RE.fullmatch(value.strip())
+    if not match:
+        return None
+    base_text = match.group("base").upper()
+    index_text = match.group("index").upper()
+    _validate_device_address(base_text, path, plc_model)
+    _validate_device_address(
+        index_text, path, plc_model, expected_prefixes={"V", "Z"}
+    )
+    return {"base_text": base_text, "index_text": index_text}
+
+
+def _operand_base_device(value):
+    text = str(value or "").strip().upper()
+    match = INDEXED_DEVICE_ADDRESS_RE.fullmatch(text)
+    return match.group("base").upper() if match else text
+
+
 def _is_read_only_special_device(value, plc_model="FX3U"):
     """Return whether *value* is a CPU-owned read-only bit device."""
 
@@ -328,7 +392,9 @@ def _validate_writable_device(value, path, plc_model="FX3U"):
     if not isinstance(value, str):
         return
     address = value.strip().upper()
-    if _is_read_only_special_device(address, plc_model):
+    indexed = parse_indexed_device_address(address, plc_model)
+    writable_address = indexed["base_text"] if indexed else address
+    if _is_read_only_special_device(writable_address, plc_model):
         model = normalize_plc_model(plc_model)
         _fail(
             path,
@@ -356,7 +422,11 @@ def _validate_device_address(value, path, plc_model, expected_prefixes=None):
     parsed = parse_device_address(value, plc_model)
     if parsed is None:
         model = normalize_plc_model(plc_model)
-        addressing = "octal X/Y" if model == "FX3U" else "decimal X/Y and SM/SD specials"
+        addressing = (
+            "octal X/Y and V0-V7/Z0-Z7 index registers"
+            if model == "FX3U"
+            else "decimal X/Y and SM/SD specials"
+        )
         _fail(path, f"invalid or unsupported {model} device address {value!r} ({addressing})")
     if expected_prefixes and parsed[0] not in expected_prefixes:
         _fail(
@@ -514,7 +584,15 @@ def _validate_element(
             token.upper()
             for token in re.findall(r"\bD\d+\b", expression, flags=re.IGNORECASE)
         }
-        for token in DEVICE_TOKEN_RE.findall(expression):
+        indexed_tokens = INDEXED_DEVICE_TOKEN_RE.findall(expression)
+        for token in indexed_tokens:
+            indexed = _validate_indexed_device_address(
+                token, f"{path}.expression", plc_model
+            )
+            if indexed and indexed["base_text"].startswith("D"):
+                expression_registers.add(indexed["base_text"])
+        residual_expression = INDEXED_DEVICE_TOKEN_RE.sub(" ", expression)
+        for token in DEVICE_TOKEN_RE.findall(residual_expression):
             _validate_device_address(token, f"{path}.expression", plc_model)
         invalid_registers = (
             expression_registers & FX3U_DWORD_REGISTER_MEMBERS
@@ -590,9 +668,22 @@ def _validate_element(
         model = normalize_plc_model(plc_model)
         _validate_shift_operands(opcode, operands, path, plc_model)
         for operand_idx, operand in enumerate(operands):
-            if isinstance(operand, str) and DEVICE_ADDRESS_RE.fullmatch(operand.strip()):
-                _validate_device_address(
-                    operand, f"{path}.operands[{operand_idx}]", plc_model
+            if not isinstance(operand, str):
+                continue
+            operand_path = f"{path}.operands[{operand_idx}]"
+            if INDEXED_DEVICE_ADDRESS_RE.fullmatch(operand.strip()):
+                _validate_indexed_device_address(operand, operand_path, plc_model)
+            elif DEVICE_ADDRESS_RE.fullmatch(operand.strip()):
+                _validate_device_address(operand, operand_path, plc_model)
+
+        # SET/RST are bit operations.  Accepting V/Z as word/index registers
+        # must not accidentally make them valid latch targets.
+        if opcode in {"SET", "RST"} and operands:
+            target = parse_device_address(operands[0], plc_model)
+            if target is not None and target[0] in {"V", "Z"}:
+                _fail(
+                    f"{path}.operands[0]",
+                    f"{opcode} requires a bit target; {operands[0]} is an index register",
                 )
         # Unknown instructions imported from GX Works2 deliberately have no
         # guessed write semantics.  Known instructions obtain write roles from
@@ -605,9 +696,9 @@ def _validate_element(
                 model == "FX3U"
                 and
                 isinstance(operand, str)
-                and operand.upper() in FX3U_DWORD_HIGH_WORDS
+                and _operand_base_device(operand) in FX3U_DWORD_HIGH_WORDS
             ):
-                register = operand.upper()
+                register = _operand_base_device(operand)
                 _fail(
                     f"{path}.operands[{operand_idx}]",
                     f"{register} is the high word of an FX3U 32-bit register "
@@ -620,9 +711,9 @@ def _validate_element(
                     model == "FX3U"
                     and
                     isinstance(operand, str)
-                    and operand.upper() in FX3U_DWORD_REGISTER_MEMBERS
+                    and _operand_base_device(operand) in FX3U_DWORD_REGISTER_MEMBERS
                 ):
-                    register = operand.upper()
+                    register = _operand_base_device(operand)
                     _fail(
                         f"{path}.operands[{operand_idx}]",
                         f"{register} belongs to an FX3U 32-bit register pair; "

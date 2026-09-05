@@ -23,7 +23,8 @@ _TIMER_RE = re.compile(r"^T(\d+)$", re.I)
 _COUNTER_RE = re.compile(r"^C(\d+)$", re.I)
 _ST_IDENTIFIER_RE = re.compile(r"^[A-Z_][A-Z0-9_]*(?:\.[0-9A-F])?$", re.I)
 _ST_OPERAND_RE = re.compile(
-    r"^(?:(?:SM|SD|X|Y|M|D|T|C|S|R|V|Z)\d+(?:\.[0-9A-F])?|"
+    r"^(?:(?:(?:SM|SD|X|Y|M|D|T|C|S|R)\d+(?:[VZ]\d+)?|"
+    r"(?:V|Z)\d+)(?:\.[0-9A-F])?|"
     r"K-?\d+|H[0-9A-F]+|E[-+]?\d+(?:\.\d+)?|"
     r"K\d+(?:X|Y|M|S)\d+|[PI]\d+)$",
     re.I,

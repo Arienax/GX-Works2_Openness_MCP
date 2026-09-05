@@ -25,9 +25,18 @@ from instruction_registry import DEFAULT_INSTRUCTION_REGISTRY
 IR_KIND = "plc_program_ir"
 IR_SCHEMA_VERSION = 3
 
-_DEVICE_RE = re.compile(r"^(SM|SD|X|Y|M|D|T|C|S)(\d+)$", re.IGNORECASE)
+_DEVICE_RE = re.compile(
+    r"^(SM|SD|X|Y|M|D|T|C|S|V|Z)(\d+)$", re.IGNORECASE
+)
+_INDEXED_DEVICE_RE = re.compile(
+    r"^(?P<base>(?:SM|SD|X|Y|M|D|T|C|S)\d+)(?P<index>[VZ]\d+)$",
+    re.IGNORECASE,
+)
 _DEVICE_TOKEN_RE = re.compile(
-    r"(?<![A-Z0-9_])(?:SM|SD|X|Y|M|D|T|C|S)\d+(?![A-Z0-9_])",
+    r"(?<![A-Z0-9_])"
+    r"(?:(?P<base>(?:SM|SD|X|Y|M|D|T|C|S)\d+)(?P<index>[VZ]\d+)"
+    r"|(?P<simple>(?:SM|SD|X|Y|M|D|T|C|S|V|Z)\d+))"
+    r"(?![A-Z0-9_])",
     re.IGNORECASE,
 )
 _REVISION_RE = re.compile(r"(\d+)$")
@@ -57,8 +66,17 @@ def _normalized_device(value: Any) -> str:
 
 
 def _device_tokens(value: Any) -> List[str]:
+    """Return base devices plus index-register dependencies from an operand."""
+
     text = str(value or "").upper()
-    return [match.group(0).upper() for match in _DEVICE_TOKEN_RE.finditer(text)]
+    result: List[str] = []
+    for match in _DEVICE_TOKEN_RE.finditer(text):
+        if match.group("base"):
+            result.append(match.group("base").upper())
+            result.append(match.group("index").upper())
+        else:
+            result.append(match.group("simple").upper())
+    return result
 
 
 def _device_sort_key(value: str) -> Tuple[int, int, str]:
@@ -75,6 +93,8 @@ def _device_sort_key(value: str) -> Tuple[int, int, str]:
         "D": 6,
         "SD": 7,
         "S": 8,
+        "V": 9,
+        "Z": 10,
     }
     return (prefix_order.get(match.group(1).upper(), 99), int(match.group(2)), value)
 
@@ -300,6 +320,24 @@ def _instruction_access(opcode: Any, operands: Sequence[Any]) -> Tuple[Set[str],
     write_indexes = set(spec.write_indexes if spec is not None else ())
     read_write_indexes = set(spec.read_write_indexes if spec is not None else ())
     for index, operand in enumerate(operands or []):
+        text = str(operand or "").strip().upper()
+        indexed = _INDEXED_DEVICE_RE.fullmatch(text)
+        if indexed:
+            base = indexed.group("base").upper()
+            index_register = indexed.group("index").upper()
+            # The index register is always read to resolve the effective
+            # address.  For a write operand, only the base memory family is
+            # conservatively recorded as written; the external operand string
+            # remains D100Z0/X0V1/etc. in ladder/CSV artifacts.
+            reads.add(index_register)
+            if index in write_indexes:
+                writes.add(base)
+                if index in read_write_indexes:
+                    reads.add(base)
+            else:
+                reads.add(base)
+            continue
+
         tokens = set(_device_tokens(operand))
         if index in write_indexes:
             writes.update(tokens)

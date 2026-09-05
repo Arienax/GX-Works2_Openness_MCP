@@ -16,16 +16,16 @@ from hardware_profiles import (
 )
 
 
-DEVICE_RE = re.compile(r"((?:SM|SD|[XYMTCSD])\d+)", re.IGNORECASE)
+DEVICE_RE = re.compile(r"((?:SM|SD|[XYMTCSDVZ])\d+)", re.IGNORECASE)
 ASSIGNMENT_RE = re.compile(
-    r"((?:SM|SD|[XYMTCSD])\d+)\s*=\s*([^,\n]+)",
+    r"((?:SM|SD|[XYMTCSDVZ])\d+)\s*=\s*([^,\n]+)",
     re.IGNORECASE,
 )
-IO_KIND_ORDER = ("X", "Y", "M", "T", "C", "D", "S", "特殊")
+IO_KIND_ORDER = ("X", "Y", "M", "T", "C", "D", "S", "V", "Z", "特殊")
 
-_EXACT_DEVICE_RE = re.compile(r"^(SM|SD|[XYMTCSD])(\d+)$", re.IGNORECASE)
+_EXACT_DEVICE_RE = re.compile(r"^(SM|SD|[XYMTCSDVZ])(\d+)$", re.IGNORECASE)
 _VALID_IO_KINDS = set(IO_KIND_ORDER)
-_SUGGESTED_IO_DEVICE_KINDS = {"X", "Y", "M", "T", "C", "D", "S"}
+_SUGGESTED_IO_DEVICE_KINDS = {"X", "Y", "M", "T", "C", "D", "S", "V", "Z"}
 _SUGGESTED_IO_SPECIAL_KINDS = {
     "special_relays": {"M", "SM"},
     "special_registers": {"D", "SD"},
@@ -73,6 +73,8 @@ _DEVICE_LIMITS = {
         "C": 255,
         "S": 4095,
         "D": 8511,
+        "V": 7,
+        "Z": 7,
     },
     "FX5U": {
         # FX5U X/Y use decimal device numbers. 1777 is the documented
@@ -339,7 +341,14 @@ def _validate_device_address(address, plc_model):
         return None, warning, prefix, number
 
     maximum = _DEVICE_LIMITS[plc_model].get(prefix)
-    if maximum is None or number > maximum:
+    if maximum is None:
+        return (
+            f"{plc_model} 当前设备模型不支持 {prefix} 地址",
+            None,
+            prefix,
+            number,
+        )
+    if number > maximum:
         display_number = format(maximum, "o") if plc_model == "FX3U" and prefix in {"X", "Y"} else str(maximum)
         return (
             f"{address} 超出 {plc_model} {prefix}0-{prefix}{display_number} 范围",

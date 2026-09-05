@@ -33,9 +33,9 @@ RULE_IDS = (
     "PULSE_LOSS_WARNING",
 )
 
-_DEVICE_RE = re.compile(r"^(SM|SD|X|Y|M|D|T|C|S)(\d+)$", re.I)
+_DEVICE_RE = re.compile(r"^(SM|SD|X|Y|M|D|T|C|S|V|Z)(\d+)$", re.I)
 _DEVICE_TOKEN_RE = re.compile(
-    r"(?<![A-Z0-9_])(?:SM|SD|X|Y|M|D|T|C|S)\d+(?![A-Z0-9_])",
+    r"(?<![A-Z0-9_])(?:SM|SD|X|Y|M|D|T|C|S|V|Z)\d+(?![A-Z0-9_])",
     re.I,
 )
 _NETWORK_RE = re.compile(r"^N(?:_|0*)(\d+)$", re.I)
