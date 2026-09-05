@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "vendor": "mitsubishi",
+  "description": "FX3U-specific instructions and CPU support metadata.",
+  "instructions": [
+    {
+      "mnemonic": "ZRN",
+      "canonical_op": "HOME_RETURN",
+      "category": "action",
+      "semantic_kind": "vendor",
+      "cpu_support": ["FX3U"],
+      "operands": [
+        {"name": "return_speed", "role": "read"},
+        {"name": "creep_speed", "role": "read"},
+        {"name": "zero_signal", "role": "read"},
+        {"name": "pulse_output", "role": "write"}
+      ],
+      "notes": "FX5U projects should use the model-appropriate homing instruction such as DSZR."
+    }
+  ]
+}
