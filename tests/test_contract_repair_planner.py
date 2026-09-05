@@ -1,0 +1,186 @@
+import json
+from pathlib import Path
+
+from contract_repair import (
+    build_contract_repair_plan,
+    patch_device_addresses,
+    structured_contract_violations,
+)
+
+
+def _state_candidate():
+    return {
+        "device_comments": {
+            "M8002": "首扫",
+            "D0": "步骤状态寄存器",
+            "X0": "启动",
+            "Y0": "输出",
+        },
+        "rungs": [
+            {
+                "rung_id": 1,
+                "header_element": None,
+                "shared_inputs": [],
+                "branches": [
+                    {
+                        "branch_id": 1,
+                        "y_offset_level": 0,
+                        "inputs": [{"type": "NO", "address": "M8002", "label": "首扫"}],
+                        "outputs": [{"type": "COIL", "address": "Y0", "label": "临时输出"}],
+                    }
+                ],
+            },
+            {
+                "rung_id": 2,
+                "header_element": {
+                    "type": "BLOCK_INPUT",
+                    "expression": "= D0 K1",
+                    "label": "步骤1",
+                },
+                "shared_inputs": [],
+                "branches": [
+                    {
+                        "branch_id": 1,
+                        "y_offset_level": 0,
+                        "inputs": [{"type": "NO", "address": "X0", "label": "启动"}],
+                        "outputs": [{"type": "COIL", "address": "Y0", "label": "输出"}],
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def _state_spec():
+    return {
+        "summary": "用 D0 做两步顺序控制",
+        "selected_approach": {
+            "name": "D寄存器步进状态机",
+            "description": "D0 保存当前状态",
+            "generation_guide": "M8002 首扫用 MOV K1 D0 初始化；各步骤用 MOV Kn D0 完成状态转移",
+            "generation_contract": {
+                "required_opcodes": ["MOV"],
+                "forbidden_opcodes": [],
+                "required_devices": ["M8002", "D0"],
+                "forbidden_devices": [],
+                "required_structures": [
+                    "register_state_machine",
+                    "state_initialization",
+                    "state_comparison",
+                    "state_transition",
+                ],
+                "forbidden_structures": ["bit_state_machine"],
+                "any_of_opcode_groups": [],
+                "any_of_structure_groups": [],
+                "enforce": True,
+            },
+        },
+    }
+
+
+def test_contract_violations_are_structured():
+    violations = structured_contract_violations(_state_candidate(), _state_spec())
+    assert any(
+        item["kind"] == "missing_opcode" and item["value"] == "MOV"
+        for item in violations
+    )
+    assert all(item.get("violation_id") for item in violations)
+
+
+def test_state_machine_repair_is_scoped_and_rejects_dummy_opcode_strategy():
+    plan = build_contract_repair_plan(
+        _state_candidate(), _state_spec(), plc_model="FX3U"
+    )
+    assert plan["repairability"] == "scoped_patch"
+    assert plan["allowed_rung_ids"] == [1, 2]
+    assert {"D0", "M8002"}.issubset(set(plan["allowed_addresses"]))
+    assert 'mode 必须为 "partial"' in plan["prompt"]
+    assert "M8000+MOV" in plan["prompt"]
+    assert "死代码" in plan["prompt"]
+
+
+def test_bare_required_opcode_without_semantic_anchor_is_not_auto_repaired():
+    ladder = {
+        "device_comments": {"X0": "启动", "Y0": "输出"},
+        "rungs": [
+            {
+                "rung_id": 1,
+                "header_element": None,
+                "shared_inputs": [],
+                "branches": [
+                    {
+                        "branch_id": 1,
+                        "y_offset_level": 0,
+                        "inputs": [{"type": "NO", "address": "X0", "label": "启动"}],
+                        "outputs": [{"type": "COIL", "address": "Y0", "label": "输出"}],
+                    }
+                ],
+            }
+        ],
+    }
+    spec = {
+        "selected_approach": {
+            "name": "只写了必用 MOV 的不完整方案",
+            "generation_guide": "",
+            "generation_contract": {
+                "required_opcodes": ["MOV"],
+                "forbidden_opcodes": [],
+                "required_devices": [],
+                "forbidden_devices": [],
+                "required_structures": [],
+                "forbidden_structures": [],
+                "any_of_opcode_groups": [],
+                "any_of_structure_groups": [],
+                "enforce": True,
+            },
+        }
+    }
+    plan = build_contract_repair_plan(ladder, spec)
+    assert plan["repairability"] == "needs_user_context"
+    assert "prompt" not in plan
+    assert plan["allowed_rung_ids"] == []
+
+
+def test_partial_patch_device_scan_covers_rungs_and_comments():
+    partial = {
+        "mode": "partial",
+        "device_comments": {"D0": "状态"},
+        "rungs": [
+            {
+                "rung_id": 2,
+                "header_element": {"type": "BLOCK_INPUT", "expression": "= D0 K1"},
+                "shared_inputs": [],
+                "branches": [
+                    {
+                        "branch_id": 1,
+                        "y_offset_level": 0,
+                        "inputs": [{"type": "NO", "address": "X0"}],
+                        "outputs": [
+                            {
+                                "type": "APP_INSTR",
+                                "opcode": "MOV",
+                                "operands": ["K2", "D0"],
+                                "label": "状态转移",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    assert patch_device_addresses(partial) == {"D0", "X0"}
+
+
+def test_plan_is_json_serializable_for_audit_metadata():
+    plan = build_contract_repair_plan(_state_candidate(), _state_spec())
+    json.dumps(plan, ensure_ascii=False)
+
+
+def test_main_integrates_contract_repair_as_scoped_partial_patch():
+    source = Path("src/main.py").read_text(encoding="utf-8")
+    assert "build_contract_repair_plan" in source
+    assert 'task_type="contract_repair"' in source
+    assert "patch_device_addresses(parsed)" in source
+    assert "allowed_rung_ids=plan[\"allowed_rung_ids\"]" in source
+    assert "allowed_addresses=plan[\"allowed_addresses\"]" in source
+    assert "方案约束修复候选未通过验证，不会继续隐藏重试" in source
