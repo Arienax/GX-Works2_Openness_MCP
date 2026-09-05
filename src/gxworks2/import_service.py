@@ -382,7 +382,7 @@ class ImportService:
                 "external_modification",
                 (
                     "当前GX Works2工程上次绑定到另一个PLC AI项目。"
-                    "为避免串项目覆盖，已停止导入；请使用“同步 GX Works2”选择保留哪一方。"
+                    "为避免串项目覆盖，已停止写入；请使用“高级同步”选择保留哪一方。"
                     if binding_mismatch
                     else
                     "检测到GX Works2中的当前程序或软元件注释与上次同步版本不同，"

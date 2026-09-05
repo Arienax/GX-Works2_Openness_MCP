@@ -963,7 +963,7 @@ class GXWorks2SyncErrorDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         if bool(getattr(result, "retryable", False)):
-            self.retry_button = QPushButton("重试同步", self)
+            self.retry_button = QPushButton("重试", self)
             self.retry_button.clicked.connect(self._accept_retry)
             buttons.addWidget(self.retry_button)
         else:
@@ -4532,6 +4532,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self._pending_gx_sync_result = None
         self._gx_sync_request = None
         self._gx_sync_retry_pending = False
+        self._gx_sync_intent = "idle"
         self._pending_gx_pull = None
         self._simulator_test_plan_thread = None
         self._simulator_test_execute_thread = None
@@ -5288,16 +5289,41 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.gxworks2_sync_status.setToolTip(
             "显示当前项目版本与GX Works2中MAIN程序、软元件注释的同步状态"
         )
-        self.gxworks2_import_button = QPushButton("同步 GX Works2")
+        self.gxworks2_import_button = QPushButton("写入 GX Works2")
         self.gxworks2_import_button.setObjectName("PrimaryButton")
         set_codicon(
             self.gxworks2_import_button,
-            "sync",
-            "同步 GX Works2",
+            "export",
+            "写入 GX Works2",
             10,
         )
         self.gxworks2_import_button.setEnabled(False)
+        self.gxworks2_import_button.setToolTip(
+            "将当前已验证版本写入GX Works2；写入前仍会自动备份并检查外部修改"
+        )
         self.gxworks2_import_button.clicked.connect(
+            self._publish_current_version_to_gxworks2
+        )
+        self.gxworks2_pull_button = QPushButton("读取 GX Works2")
+        set_codicon(
+            self.gxworks2_pull_button,
+            "sync",
+            "读取 GX Works2",
+            10,
+        )
+        self.gxworks2_pull_button.setEnabled(False)
+        self.gxworks2_pull_button.setToolTip(
+            "读取GX Works2当前MAIN和注释；有差异时创建新的本地版本，不覆盖现有版本"
+        )
+        self.gxworks2_pull_button.clicked.connect(
+            self._pull_current_version_from_gxworks2
+        )
+        self.gxworks2_advanced_button = QPushButton("高级同步")
+        self.gxworks2_advanced_button.setEnabled(False)
+        self.gxworks2_advanced_button.setToolTip(
+            "比较双方与同步基线，仅在首次绑定、冲突或需要决定保留哪一方时使用"
+        )
+        self.gxworks2_advanced_button.clicked.connect(
             self._sync_current_version_with_gxworks2
         )
         self.simulator_test_button = QPushButton("仿真测试")
@@ -5328,6 +5354,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         actions.addWidget(self.contract_repair_button)
         actions.addWidget(self.gxworks2_sync_status)
         actions.addWidget(self.gxworks2_import_button)
+        actions.addWidget(self.gxworks2_pull_button)
+        actions.addWidget(self.gxworks2_advanced_button)
         actions.addWidget(self.simulator_test_button)
         layout.addLayout(actions)
         return pane
@@ -6104,7 +6132,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.gxworks2_import_button.setEnabled(mode == "ladder")
         self._set_gx_sync_status(
             "unknown" if mode == "ladder" else "unknown",
-            "点击“同步 GX Works2”检查当前版本" if mode == "ladder" else "ST版本不使用GX Works2梯形图同步",
+            "可直接写入或读取GX Works2；需要比较双方改动时使用“高级同步”" if mode == "ladder" else "ST版本不使用GX Works2梯形图同步",
         )
         self.simulator_test_button.setEnabled(mode == "ladder")
         self._update_workflow_ui()
@@ -8379,6 +8407,39 @@ class _IndustrialWorkbenchUI(QMainWindow):
             )
         )
 
+    def _gx_action_buttons(self):
+        return tuple(
+            button
+            for button in (
+                getattr(self, "gxworks2_import_button", None),
+                getattr(self, "gxworks2_pull_button", None),
+                getattr(self, "gxworks2_advanced_button", None),
+            )
+            if button is not None
+        )
+
+    def _set_gx_action_buttons_enabled(self, enabled):
+        for button in self._gx_action_buttons():
+            button.setEnabled(bool(enabled))
+
+    def _reset_gx_action_buttons(self):
+        if hasattr(self, "gxworks2_import_button"):
+            set_codicon(
+                self.gxworks2_import_button,
+                "export",
+                "写入 GX Works2",
+                10,
+            )
+        if hasattr(self, "gxworks2_pull_button"):
+            set_codicon(
+                self.gxworks2_pull_button,
+                "sync",
+                "读取 GX Works2",
+                10,
+            )
+        if hasattr(self, "gxworks2_advanced_button"):
+            self.gxworks2_advanced_button.setText("高级同步")
+
     def _update_gx_sync_button_enabled(self):
         if not hasattr(self, "gxworks2_import_button"):
             return
@@ -8387,7 +8448,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             if self.current_project_id and self.current_version_id
             else None
         )
-        self.gxworks2_import_button.setEnabled(
+        self._set_gx_action_buttons_enabled(
             bool(
                 version
                 and version.get("target_mode") == "ladder"
@@ -8429,24 +8490,53 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "context": context,
         }
 
-    def _sync_current_version_with_gxworks2(self):
+    def _publish_current_version_to_gxworks2(self):
         if self._gx_sync_busy():
-            self.statusBar().showMessage("GX Works2同步任务正在运行。", 3000)
+            self.statusBar().showMessage("GX Works2操作正在运行。", 3000)
             return
         try:
             request = self._gx_sync_request_for_version()
         except Exception as error:
-            QMessageBox.warning(
-                self,
-                "无法同步",
-                naturalize_display_text(error),
-            )
+            QMessageBox.warning(self, "无法写入", naturalize_display_text(error))
             return
+        self._gx_sync_intent = "publish"
+        self._import_current_version_to_gxworks2(
+            project_id=request["project_id"],
+            version_id=request["version_id"],
+        )
+
+    def _pull_current_version_from_gxworks2(self):
+        self._start_gxworks2_inspection("pull")
+
+    def _sync_current_version_with_gxworks2(self):
+        self._start_gxworks2_inspection("reconcile")
+
+    def _start_gxworks2_inspection(self, intent):
+        if self._gx_sync_busy():
+            self.statusBar().showMessage("GX Works2操作正在运行。", 3000)
+            return
+        try:
+            request = self._gx_sync_request_for_version()
+        except Exception as error:
+            title = "无法读取" if intent == "pull" else "无法高级同步"
+            QMessageBox.warning(self, title, naturalize_display_text(error))
+            return
+        self._gx_sync_intent = str(intent or "reconcile")
         self._pending_gx_sync_result = None
         self._gx_sync_request = request
-        self._set_gx_sync_status("checking", "正在比较项目与GX Works2")
-        self.gxworks2_import_button.setEnabled(False)
-        self.gxworks2_import_button.setText("正在检查…")
+        detail = (
+            "正在读取GX Works2当前MAIN和软元件注释"
+            if self._gx_sync_intent == "pull"
+            else "正在比较项目与GX Works2"
+        )
+        self._set_gx_sync_status("checking", detail)
+        self._set_gx_action_buttons_enabled(False)
+        active_button = (
+            self.gxworks2_pull_button
+            if self._gx_sync_intent == "pull"
+            else self.gxworks2_advanced_button
+        )
+        active_button.setText("正在读取…" if self._gx_sync_intent == "pull" else "正在检查…")
         self.statusBar().showMessage("正在读取GX Works2当前MAIN和软元件注释…")
         thread = GXWorks2SyncInspectThread(
             request["program_path"],
@@ -8487,7 +8577,14 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "retry_export": "正在安全重试…",
             "compare": "比较版本…",
         }
-        self.gxworks2_import_button.setText(labels.get(stage, "正在同步…"))
+        intent = getattr(self, "_gx_sync_intent", "reconcile")
+        button = (
+            getattr(self, "gxworks2_pull_button", None)
+            if intent == "pull"
+            else getattr(self, "gxworks2_advanced_button", None)
+        )
+        if button is not None:
+            button.setText(labels.get(stage, "处理中…"))
         self.statusBar().showMessage(naturalize_display_text(message))
 
     @staticmethod
@@ -8573,6 +8670,19 @@ class _IndustrialWorkbenchUI(QMainWindow):
                     QTimer.singleShot(0, self._run_pending_gx_sync_retry)
             return
         status = result.status.value
+        intent = getattr(self, "_gx_sync_intent", "reconcile")
+        if intent == "pull":
+            if status == "synced":
+                gx_save = (result.details or {}).get("gx_save", {}) or {}
+                self._set_gx_sync_status(
+                    "unsaved" if gx_save and not gx_save.get("success") else "synced",
+                    gx_save.get("message") or "GX Works2内容与当前版本一致",
+                )
+                self.activity_panel.set_status("GX Works2内容与当前版本一致，无需创建新版本")
+                self.statusBar().showMessage("GX Works2内容与当前版本一致，无需回读。", 6000)
+            else:
+                self._start_gxworks2_pull(result, request)
+            return
         if status == "synced":
             gx_save = (result.details or {}).get("gx_save", {}) or {}
             self._set_gx_sync_status(
@@ -8609,18 +8719,26 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     def _gxworks2_sync_thread_finished(self):
         if self._gx_sync_retry_pending:
-            self.gxworks2_import_button.setEnabled(False)
-            self.gxworks2_import_button.setText("准备重试…")
+            self._set_gx_action_buttons_enabled(False)
+            active_button = (
+                self.gxworks2_pull_button
+                if getattr(self, "_gx_sync_intent", "reconcile") == "pull"
+                else self.gxworks2_advanced_button
+            )
+            active_button.setText("准备重试…")
             QTimer.singleShot(0, self._run_pending_gx_sync_retry)
             return
-        self.gxworks2_import_button.setText("同步 GX Works2")
+        self._reset_gx_action_buttons()
         self._update_gx_sync_button_enabled()
 
     def _run_pending_gx_sync_retry(self):
         if not self._gx_sync_retry_pending or self._gx_sync_busy():
             return
         self._gx_sync_retry_pending = False
-        self._sync_current_version_with_gxworks2()
+        if getattr(self, "_gx_sync_intent", "reconcile") == "pull":
+            self._pull_current_version_from_gxworks2()
+        else:
+            self._sync_current_version_with_gxworks2()
 
     def _start_gxworks2_pull(self, result, request):
         if self._gxworks2_pull_thread is not None:
@@ -8640,8 +8758,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "output_dir": output_dir,
         }
         self._set_gx_sync_status("pulling", "正在把GX Works2人工修改保存为新版本")
-        self.gxworks2_import_button.setEnabled(False)
-        self.gxworks2_import_button.setText("正在回读…")
+        self._set_gx_action_buttons_enabled(False)
+        self.gxworks2_pull_button.setText("正在读取…")
         self.statusBar().showMessage("正在解析GX Works2程序并创建新的项目版本…")
         thread = GXWorks2PullThread(
             result.exported_program_path,
@@ -8781,7 +8899,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     def _gxworks2_pull_thread_finished(self):
         self._pending_gx_pull = None
-        self.gxworks2_import_button.setText("同步 GX Works2")
+        self._gx_sync_intent = "idle"
+        self._reset_gx_action_buttons()
         self._update_gx_sync_button_enabled()
 
     def _import_current_version_to_gxworks2(
@@ -8825,8 +8944,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
             QMessageBox.critical(self, "导入失败", "当前版本缺少软元件注释CSV。")
             return
 
-        self.gxworks2_import_button.setEnabled(False)
-        self.gxworks2_import_button.setText("正在同步…")
+        self._set_gx_action_buttons_enabled(False)
+        self.gxworks2_import_button.setText("正在写入…")
         self._set_gx_sync_status("pushing", "正在备份并写入GX Works2")
         self.statusBar().showMessage("正在检查GX Works2与目标工程…")
         import_context = {
@@ -8873,7 +8992,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.statusBar().showMessage(naturalize_display_text(message))
 
     def _gxworks2_import_finished(self, result):
-        self.gxworks2_import_button.setText("同步 GX Works2")
+        self._reset_gx_action_buttons()
         display_message = naturalize_display_text(result.message)
         # ``completed`` is emitted from inside QThread.run(), just before the
         # worker actually reaches QThread.finished.  Keep the owning Python
@@ -8906,7 +9025,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 self.activateWindow()
                 QMessageBox.warning(
                     self,
-                    "同步完成（需要核对）",
+                    "写入完成（需要核对）",
                     display_message + details,
                 )
                 self.statusBar().showMessage(display_message, 10000)
@@ -8939,14 +9058,15 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.activateWindow()
         QMessageBox.warning(
             self,
-            "GX Works2同步未完成",
+            "GX Works2写入未完成",
             display_message + backup_note,
         )
         self.statusBar().showMessage(display_message, 8000)
 
     def _gxworks2_import_thread_finished(self):
         self._gxworks2_import_thread = None
-        self.gxworks2_import_button.setText("同步 GX Works2")
+        self._gx_sync_intent = "idle"
+        self._reset_gx_action_buttons()
         if hasattr(self, "_update_gx_sync_button_enabled"):
             self._update_gx_sync_button_enabled()
         else:
