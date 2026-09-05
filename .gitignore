@@ -1,12 +1,25 @@
-# Python/runtime state
+# Python caches and environments
 __pycache__/
 *.py[cod]
+*$py.class
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.tox/
+.nox/
 .coverage
+.coverage.*
+htmlcov/
 .venv/
 venv/
+env/
+ENV/
+__pypackages__/
+*.egg-info/
+.eggs/
+
+# Local runtime state
 config.json
 chat_history.json
 confirmed_requirements.json
@@ -22,6 +35,7 @@ temp_program.st
 *.pem
 *.key
 secrets*.json
+.pypirc
 
 # Vendor manuals are downloaded from the official URLs in sources.json.
 resources/knowledge/sources/*.pdf
@@ -40,13 +54,15 @@ src-cpp/out/
 *.suo
 .vs/
 
-# Local assistant/editor state
+# Local assistant and editor state
 .agents/
 .claude/
 .codex/
 .codex-backups/
+.idea/
+.vscode/
 
-# Operating system files
+# Operating system and temporary files
 Thumbs.db
 Desktop.ini
 *.tmp
