@@ -809,3 +809,24 @@ def test_pending_manual_retry_waits_until_the_worker_is_released():
     _IndustrialWorkbenchUI._run_pending_gx_sync_retry(workbench)
     assert workbench.started == 1
     assert workbench._gx_sync_retry_pending is False
+
+
+def test_read_current_snapshot_needs_no_local_version(tmp_path):
+    gx_program = tmp_path / "gx-bootstrap.csv"
+    gx_comments = tmp_path / "gx-bootstrap-comments.csv"
+    _write_program(gx_program, output="Y007")
+    _write_comments(gx_comments, [["X000", "启动"], ["Y007", "已有输出"]])
+    service = _service(tmp_path, _Automation(gx_program, gx_comments))
+
+    result = service.read_current_snapshot(
+        import_context={"project_id": "empty-project", "program_name": "MAIN"}
+    )
+
+    assert result.success
+    assert result.details["bootstrap"] is True
+    assert result.details["project_identity"]
+    assert Path(result.exported_program_path).is_file()
+    assert Path(result.exported_comment_path).is_file()
+    assert CSVManager().program_semantic_sha256(result.exported_program_path) == (
+        CSVManager().program_semantic_sha256(gx_program)
+    )

@@ -516,17 +516,14 @@ class GXWorks2SyncService:
             )
         return None
 
-    def inspect(
+    def _read_current_snapshot_core(
         self,
-        app_program_path,
-        app_comment_path,
         *,
         progress=None,
         import_context=None,
         project_identity: Optional[str] = None,
-    ) -> SyncResult:
-        app_program_path = Path(app_program_path).expanduser().resolve()
-        app_comment_path = Path(app_comment_path).expanduser().resolve()
+    ):
+        """Read one coherent MAIN/comments snapshot without requiring a local version."""
         expected_program_name = str(
             (import_context or {}).get("program_name") or "MAIN"
             if isinstance(import_context, Mapping)
@@ -537,38 +534,6 @@ class GXWorks2SyncService:
             "program_ready": None,
             "program_name": expected_program_name,
         }
-        self._report(progress, "validate_local", "正在校验当前项目版本")
-        try:
-            program_validation = self.csv_manager.validate(app_program_path)
-            comment_validation = self.csv_manager.validate_comments(app_comment_path)
-        except Exception as error:
-            return self._error(
-                "当前项目版本无法校验：" + describe_exception(error),
-                GXSyncErrorCode.GX_LOCAL_CSV_INVALID,
-                stage="validate_local",
-                retryable=False,
-                state=precheck_state,
-                error=error,
-                details={
-                    "program_path": str(app_program_path),
-                    "comment_path": str(app_comment_path),
-                },
-            )
-        errors = list(program_validation.errors) + list(comment_validation.errors)
-        if errors:
-            return self._error(
-                "当前项目版本无法同步：" + "；".join(errors),
-                GXSyncErrorCode.GX_LOCAL_CSV_INVALID,
-                stage="validate_local",
-                retryable=False,
-                state=precheck_state,
-                details={
-                    "program_path": str(app_program_path),
-                    "comment_path": str(app_comment_path),
-                    "validation_errors": errors,
-                },
-            )
-
         self._report(progress, "check_gxworks2", "正在检查GX Works2当前工程")
         try:
             session = self.finder.find_running()
@@ -888,6 +853,131 @@ class GXWorks2SyncService:
                 "save_required": True,
                 "message": "请在GX Works2中保存当前工程。",
             }
+
+        return {
+            "session": session,
+            "state": state,
+            "project_name": project_name,
+            "identity": identity,
+            "folder": folder,
+            "gx_program_path": gx_program_path,
+            "gx_comment_path": gx_comment_path,
+            "attempts": attempts,
+            "recovery_details": recovery_details,
+            "completed_attempt": completed_attempt,
+            "gx_save": gx_save,
+        }
+
+    def read_current_snapshot(
+        self,
+        *,
+        progress=None,
+        import_context=None,
+        project_identity: Optional[str] = None,
+    ) -> SyncResult:
+        """Export GX MAIN/comments for bootstrap import into an empty AI project."""
+        snapshot = self._read_current_snapshot_core(
+            progress=progress,
+            import_context=import_context,
+            project_identity=project_identity,
+        )
+        if isinstance(snapshot, SyncResult):
+            return snapshot
+        state = snapshot["state"]
+        details = {
+            "project_identity": snapshot["identity"],
+            "export_folder": str(snapshot["folder"]),
+            "gx_save": snapshot["gx_save"],
+            "export_attempt": snapshot["completed_attempt"],
+            "max_export_attempts": self.max_export_attempts,
+            "export_attempts": snapshot["attempts"],
+            "recovery": snapshot["recovery_details"],
+            "program_name": str(state.get("program_name") or "MAIN"),
+            "bootstrap": True,
+        }
+        return SyncResult(
+            True,
+            SyncStatus.SYNCED,
+            "已读取GX Works2当前MAIN和软元件注释。",
+            project_name=snapshot["project_name"],
+            exported_program_path=str(snapshot["gx_program_path"]),
+            exported_comment_path=str(snapshot["gx_comment_path"]),
+            details=details,
+            stage="read_snapshot",
+            retryable=False,
+        )
+
+    def inspect(
+        self,
+        app_program_path,
+        app_comment_path,
+        *,
+        progress=None,
+        import_context=None,
+        project_identity: Optional[str] = None,
+    ) -> SyncResult:
+        app_program_path = Path(app_program_path).expanduser().resolve()
+        app_comment_path = Path(app_comment_path).expanduser().resolve()
+        expected_program_name = str(
+            (import_context or {}).get("program_name") or "MAIN"
+            if isinstance(import_context, Mapping)
+            else "MAIN"
+        )
+        precheck_state = {
+            "project_open": None,
+            "program_ready": None,
+            "program_name": expected_program_name,
+        }
+        self._report(progress, "validate_local", "正在校验当前项目版本")
+        try:
+            program_validation = self.csv_manager.validate(app_program_path)
+            comment_validation = self.csv_manager.validate_comments(app_comment_path)
+        except Exception as error:
+            return self._error(
+                "当前项目版本无法校验：" + describe_exception(error),
+                GXSyncErrorCode.GX_LOCAL_CSV_INVALID,
+                stage="validate_local",
+                retryable=False,
+                state=precheck_state,
+                error=error,
+                details={
+                    "program_path": str(app_program_path),
+                    "comment_path": str(app_comment_path),
+                },
+            )
+        errors = list(program_validation.errors) + list(comment_validation.errors)
+        if errors:
+            return self._error(
+                "当前项目版本无法同步：" + "；".join(errors),
+                GXSyncErrorCode.GX_LOCAL_CSV_INVALID,
+                stage="validate_local",
+                retryable=False,
+                state=precheck_state,
+                details={
+                    "program_path": str(app_program_path),
+                    "comment_path": str(app_comment_path),
+                    "validation_errors": errors,
+                },
+            )
+
+        snapshot = self._read_current_snapshot_core(
+            progress=progress,
+            import_context=import_context,
+            project_identity=project_identity,
+        )
+        if isinstance(snapshot, SyncResult):
+            return snapshot
+        session = snapshot["session"]
+        state = snapshot["state"]
+        project_name = snapshot["project_name"]
+        identity = snapshot["identity"]
+        folder = snapshot["folder"]
+        gx_program_path = snapshot["gx_program_path"]
+        gx_comment_path = snapshot["gx_comment_path"]
+        attempts = snapshot["attempts"]
+        recovery_details = snapshot["recovery_details"]
+        completed_attempt = snapshot["completed_attempt"]
+        gx_save = snapshot["gx_save"]
 
         self._report(progress, "compare", "正在比较项目与GX Works2版本")
         try:

@@ -4,6 +4,7 @@ from .api import (
     configure,
     import_current_program,
     inspect_current_sync,
+    read_current_snapshot,
     record_sync_snapshot,
 )
 from .diagnostics import describe_exception
@@ -27,6 +28,7 @@ __all__ = [
     "configure",
     "import_current_program",
     "inspect_current_sync",
+    "read_current_snapshot",
     "record_sync_snapshot",
     "describe_exception",
 ]

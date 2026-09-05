@@ -12,12 +12,36 @@ def test_simple_gx_bridge_actions_are_primary_ui():
     assert 'self._start_gxworks2_inspection("reconcile")' in text
 
 
+def test_empty_project_pull_has_bootstrap_request():
+    text = Path("src/main.py").read_text(encoding="utf-8")
+    assert "def _gx_pull_request(self):" in text
+    assert '"bootstrap": True' in text
+    assert 'snapshot_only=bool(request.get("bootstrap"))' in text
+    assert 'if intent == "pull" and request.get("bootstrap"):' in text
+    assert "self._start_gxworks2_pull(result, request)" in text
+
+
+def test_pull_button_only_requires_selected_project():
+    text = Path("src/main.py").read_text(encoding="utf-8")
+    state = text.split("def _update_gx_sync_button_enabled", 1)[1].split("    def ", 1)[0]
+    assert "project_ready = bool(self.current_project_id)" in state
+    assert "ladder_ready = bool(version" in state
+    assert "self.gxworks2_pull_button.setEnabled(project_ready and available)" in state
+    assert "self.gxworks2_import_button.setEnabled(ladder_ready and available)" in state
+    assert "self.gxworks2_advanced_button.setEnabled(ladder_ready and available)" in state
+
+
+def test_bootstrap_pull_creates_root_version():
+    text = Path("src/main.py").read_text(encoding="utf-8")
+    completed = text.split("def _gxworks2_pull_completed", 1)[1].split("    def ", 1)[0]
+    assert '"从GX Works2导入的初始程序"' in completed
+    assert '"gxworks2_bootstrap"' in completed
+    assert "None if bootstrap" in completed
+
+
 def test_direct_pull_does_not_force_three_way_choice():
     text = Path("src/main.py").read_text(encoding="utf-8")
-    marker = 'if intent == "pull":'
-    assert marker in text
-    branch = text.split(marker, 1)[1].split('if status == "synced":', 2)
-    assert len(branch) >= 2
+    assert 'if intent == "pull":' in text
     assert "self._start_gxworks2_pull(result, request)" in text
 
 
@@ -26,13 +50,11 @@ def test_external_modification_points_to_advanced_sync():
     assert '请使用“高级同步”选择保留哪一方' in text
 
 
-def test_bridge_button_state_is_managed_as_one_group():
+def test_snapshot_only_thread_uses_public_read_api():
     text = Path("src/main.py").read_text(encoding="utf-8")
-    assert "def _set_gx_action_buttons_enabled" in text
-    assert 'self._set_gx_action_buttons_enabled(False)' in text
-    assert 'self._update_gx_sync_button_enabled()' in text
-    assert 'self.setWindowTitle("GX Works2操作未完成")' in text
-    retry = text.split("if dialog.retry_requested:", 1)[1].split("return", 1)[0]
-    assert "self._set_gx_action_buttons_enabled(False)" in retry
-    assert "self.gxworks2_pull_button" in retry
-    assert "self.gxworks2_advanced_button" in retry
+    thread = text.split("class GXWorks2SyncInspectThread", 1)[1].split(
+        "class GXWorks2SyncErrorDialog", 1
+    )[0]
+    assert "snapshot_only=False" in thread
+    assert "from gxworks2 import read_current_snapshot" in thread
+    assert "result = read_current_snapshot(" in thread

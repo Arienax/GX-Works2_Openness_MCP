@@ -107,6 +107,20 @@ def import_current_program(
     )
 
 
+
+def read_current_snapshot(
+    *,
+    progress=None,
+    import_context=None,
+    project_identity=None,
+):
+    """Read GX Works2 MAIN/comments without requiring a local application version."""
+    return _get_sync_service().read_current_snapshot(
+        progress=progress,
+        import_context=import_context,
+        project_identity=project_identity,
+    )
+
 def inspect_current_sync(
     program_csv_path,
     comment_csv_path,

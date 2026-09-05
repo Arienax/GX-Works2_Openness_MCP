@@ -813,11 +813,19 @@ class GXWorks2SyncInspectThread(QThread):
     completed = pyqtSignal(object)
     progress_changed = pyqtSignal(str, str)
 
-    def __init__(self, program_csv_path, comment_csv_path, import_context=None):
+    def __init__(
+        self,
+        program_csv_path=None,
+        comment_csv_path=None,
+        import_context=None,
+        *,
+        snapshot_only=False,
+    ):
         super().__init__()
-        self.program_csv_path = str(program_csv_path)
-        self.comment_csv_path = str(comment_csv_path)
+        self.program_csv_path = str(program_csv_path or "")
+        self.comment_csv_path = str(comment_csv_path or "")
         self.import_context = dict(import_context or {})
+        self.snapshot_only = bool(snapshot_only)
 
     def run(self):
         pythoncom = None
@@ -827,14 +835,22 @@ class GXWorks2SyncInspectThread(QThread):
                 pythoncom.CoInitialize()
             except ImportError:
                 pythoncom = None
-            from gxworks2 import inspect_current_sync
+            if self.snapshot_only:
+                from gxworks2 import read_current_snapshot
 
-            result = inspect_current_sync(
-                self.program_csv_path,
-                self.comment_csv_path,
-                progress=self.progress_changed.emit,
-                import_context=self.import_context,
-            )
+                result = read_current_snapshot(
+                    progress=self.progress_changed.emit,
+                    import_context=self.import_context,
+                )
+            else:
+                from gxworks2 import inspect_current_sync
+
+                result = inspect_current_sync(
+                    self.program_csv_path,
+                    self.comment_csv_path,
+                    progress=self.progress_changed.emit,
+                    import_context=self.import_context,
+                )
         except Exception as error:
             from gxworks2.diagnostics import describe_exception, exception_details
             from gxworks2.models import GXSyncErrorCode, SyncResult, SyncStatus
@@ -842,7 +858,7 @@ class GXWorks2SyncInspectThread(QThread):
             result = SyncResult(
                 False,
                 SyncStatus.ERROR,
-                "GX Works2同步检查异常：" + describe_exception(error),
+                "GX Works2读取检查异常：" + describe_exception(error),
                 GXSyncErrorCode.GX_UNEXPECTED_ERROR,
                 details={
                     "category": "precheck",
@@ -863,6 +879,7 @@ class GXWorks2SyncInspectThread(QThread):
                     "attempts": [],
                     "program_path": self.program_csv_path,
                     "comment_path": self.comment_csv_path,
+                    "bootstrap": self.snapshot_only,
                     **exception_details(error),
                 },
                 stage="unexpected",
@@ -6148,7 +6165,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.export_button.setEnabled(False)
         self.contract_repair_button.setEnabled(False)
         self.contract_repair_button.setVisible(False)
-        self._set_gx_action_buttons_enabled(False)
+        self._update_gx_sync_button_enabled()
         self._set_gx_sync_status("unknown")
         self.simulator_test_button.setEnabled(False)
         self.simulation_progress_panel.setVisible(False)
@@ -8443,18 +8460,17 @@ class _IndustrialWorkbenchUI(QMainWindow):
     def _update_gx_sync_button_enabled(self):
         if not hasattr(self, "gxworks2_import_button"):
             return
+        project_ready = bool(self.current_project_id)
         version = (
             self.store.get_version(self.current_project_id, self.current_version_id)
             if self.current_project_id and self.current_version_id
             else None
         )
-        self._set_gx_action_buttons_enabled(
-            bool(
-                version
-                and version.get("target_mode") == "ladder"
-                and not self._gx_sync_busy()
-            )
-        )
+        ladder_ready = bool(version and version.get("target_mode") == "ladder")
+        available = not self._gx_sync_busy()
+        self.gxworks2_import_button.setEnabled(ladder_ready and available)
+        self.gxworks2_pull_button.setEnabled(project_ready and available)
+        self.gxworks2_advanced_button.setEnabled(ladder_ready and available)
 
     def _gx_sync_request_for_version(self, project_id=None, version_id=None):
         project_id = project_id or self.current_project_id
@@ -8490,6 +8506,43 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "context": context,
         }
 
+    def _gx_pull_request(self):
+        project_id = self.current_project_id
+        if not project_id:
+            raise ValueError("请先选择一个项目。")
+        project = self.store.get_project(project_id)
+        if not project:
+            raise ValueError("当前项目不存在。")
+        version = (
+            self.store.get_version(project_id, self.current_version_id)
+            if self.current_version_id
+            else None
+        )
+        if version and version.get("target_mode") == "ladder":
+            request = self._gx_sync_request_for_version(
+                project_id=project_id,
+                version_id=self.current_version_id,
+            )
+            request["bootstrap"] = False
+            return request
+        return {
+            "project_id": project_id,
+            "version_id": None,
+            "version": None,
+            "program_path": None,
+            "comment_path": None,
+            "context": {
+                "project_id": project_id,
+                "version_id": None,
+                "revision": None,
+                "program_name": "MAIN",
+                "ir_schema_version": None,
+                "ir_sha256": None,
+                "ladder_sha256": None,
+            },
+            "bootstrap": True,
+        }
+
     def _publish_current_version_to_gxworks2(self):
         if self._gx_sync_busy():
             self.statusBar().showMessage("GX Works2操作正在运行。", 3000)
@@ -8516,7 +8569,11 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self.statusBar().showMessage("GX Works2操作正在运行。", 3000)
             return
         try:
-            request = self._gx_sync_request_for_version()
+            request = (
+                self._gx_pull_request()
+                if intent == "pull"
+                else self._gx_sync_request_for_version()
+            )
         except Exception as error:
             title = "无法读取" if intent == "pull" else "无法高级同步"
             QMessageBox.warning(self, title, naturalize_display_text(error))
@@ -8539,9 +8596,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
         active_button.setText("正在读取…" if self._gx_sync_intent == "pull" else "正在检查…")
         self.statusBar().showMessage("正在读取GX Works2当前MAIN和软元件注释…")
         thread = GXWorks2SyncInspectThread(
-            request["program_path"],
-            request["comment_path"],
+            request.get("program_path"),
+            request.get("comment_path"),
             import_context=request["context"],
+            snapshot_only=bool(request.get("bootstrap")),
         )
         thread.progress_changed.connect(self._gxworks2_sync_progress)
         thread.completed.connect(self._gxworks2_sync_inspected)
@@ -8676,6 +8734,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return
         status = result.status.value
         intent = getattr(self, "_gx_sync_intent", "reconcile")
+        if intent == "pull" and request.get("bootstrap"):
+            self._start_gxworks2_pull(result, request)
+            return
         if intent == "pull":
             if status == "synced":
                 gx_save = (result.details or {}).get("gx_save", {}) or {}
@@ -8751,6 +8812,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         project = self.store.get_project(request["project_id"])
         if not project:
             return
+        source_version = request.get("version") or {}
+        result_details = dict(getattr(result, "details", {}) or {})
         try:
             version_id, output_dir = self.store.prepare_version(request["project_id"])
         except Exception as error:
@@ -8771,11 +8834,11 @@ class _IndustrialWorkbenchUI(QMainWindow):
             result.exported_comment_path,
             output_dir,
             plc_model=(
-                request["version"].get("plc_model")
+                source_version.get("plc_model")
                 or project.get("plc_model")
                 or "FX3U"
             ),
-            program_name=request["version"].get("program_name") or "MAIN",
+            program_name=source_version.get("program_name") or result_details.get("program_name") or "MAIN",
             revision=int(str(version_id).lstrip("vV") or "1"),
         )
         thread.completed.connect(self._gxworks2_pull_completed)
@@ -8794,12 +8857,22 @@ class _IndustrialWorkbenchUI(QMainWindow):
         project_id = pending["request"]["project_id"]
         version_id = pending["version_id"]
         metadata = dict(metadata or {})
+        bootstrap = bool(pending["request"].get("bootstrap"))
         metadata.update(
             {
-                "summary": "从GX Works2同步的人工修改",
-                "parent_version_id": pending["request"]["version_id"],
+                "summary": (
+                    "从GX Works2导入的初始程序"
+                    if bootstrap
+                    else "从GX Works2同步的人工修改"
+                ),
+                "parent_version_id": (
+                    None if bootstrap else pending["request"]["version_id"]
+                ),
                 "confirmed_spec_snapshot": None,
                 "confirmed_spec_hash": None,
+                "import_origin": (
+                    "gxworks2_bootstrap" if bootstrap else "gxworks2_pull"
+                ),
             }
         )
         try:
@@ -8835,12 +8908,18 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.store.add_message(
             project_id,
             "assistant",
-            f"已从GX Works2回读人工修改并创建{version_display_name(version_id)}。",
+            (
+                f"已从GX Works2导入初始程序并创建{version_display_name(version_id)}。"
+                if bootstrap
+                else f"已从GX Works2回读人工修改并创建{version_display_name(version_id)}。"
+            ),
             kind="system",
             metadata={
                 "workflow_mode": "gxworks2_sync",
                 "version_id": version_id,
-                "parent_version_id": pending["request"]["version_id"],
+                "parent_version_id": (
+                    None if bootstrap else pending["request"]["version_id"]
+                ),
                 "baseline_error": baseline_error,
             },
         )
