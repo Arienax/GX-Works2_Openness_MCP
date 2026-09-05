@@ -5343,6 +5343,11 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.gxworks2_advanced_button.clicked.connect(
             self._sync_current_version_with_gxworks2
         )
+        self.gxw_reader_button = QPushButton("解析 GXW")
+        self.gxw_reader_button.setToolTip(
+            "实验性只读解析GX Works2 Structured Ladder/FBD工程；不会修改原GXW文件"
+        )
+        self.gxw_reader_button.clicked.connect(self._open_gxw_structured_reader)
         self.simulator_test_button = QPushButton("仿真测试")
         self.simulator_test_button.setObjectName("PrimaryButton")
         set_codicon(
@@ -5373,6 +5378,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         actions.addWidget(self.gxworks2_import_button)
         actions.addWidget(self.gxworks2_pull_button)
         actions.addWidget(self.gxworks2_advanced_button)
+        actions.addWidget(self.gxw_reader_button)
         actions.addWidget(self.simulator_test_button)
         layout.addLayout(actions)
         return pane
@@ -8392,6 +8398,96 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 return
             shutil.copy2(source, destination)
         self.statusBar().showMessage(f"已导出到 {destination}", 6000)
+
+    def _open_gxw_structured_reader(self):
+        source, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 GX Works2 Structured Ladder/FBD 工程",
+            "",
+            "GX Works2 Project (*.gxw);;All Files (*.*)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
+        if not source:
+            return
+
+        try:
+            from gxw.decoder import describe_program
+            from gxw.models import GXWFormatError
+            from gxw.project_resolver import GXWProjectResolver
+            from gxw.structured_pou import parse_structured_pou
+
+            resolver = GXWProjectResolver.from_file(source)
+            candidates = resolver.program_pou_names()
+            if not candidates:
+                raise GXWFormatError("工程中没有找到 *.Program.pou。")
+
+            selected = candidates[0]
+            if len(candidates) > 1:
+                selected, accepted = QInputDialog.getItem(
+                    self,
+                    "选择程序体",
+                    "检测到多个 Program.pou，请选择要解析的程序体：",
+                    candidates,
+                    0,
+                    False,
+                )
+                if not accepted or not selected:
+                    return
+
+            program = parse_structured_pou(
+                resolver.read_logical_file(selected),
+                logical_name=selected,
+                source_path=Path(source),
+            )
+            report_lines = describe_program(program)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "GXW 解析失败",
+                "当前入口只针对已验证的 Structured Ladder/FBD GXW 结构。\n\n"
+                + naturalize_display_text(str(exc)),
+            )
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("GXW 结构化梯形图解析（只读）")
+        dialog.resize(900, 640)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        title = QLabel(
+            f"{Path(source).name}  ·  {selected}  ·  "
+            f"{len(program.nodes)} 节点  ·  {len(program.wires)} 连线"
+        )
+        title.setObjectName("CanvasTitle")
+        layout.addWidget(title)
+
+        note = QLabel(
+            "实验性只读解析：不会修改GXW文件。未知结构会保留或报错，不会猜测。"
+        )
+        note.setWordWrap(True)
+        note.setObjectName("HelperText")
+        layout.addWidget(note)
+
+        output = QPlainTextEdit(dialog)
+        output.setReadOnly(True)
+        output.setPlainText("\n".join(report_lines))
+        layout.addWidget(output, 1)
+
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        close_button = QPushButton("关闭")
+        close_button.clicked.connect(dialog.accept)
+        footer.addWidget(close_button)
+        layout.addLayout(footer)
+
+        dialog.exec()
+        self.statusBar().showMessage(
+            f"已只读解析 {Path(source).name}：{len(program.nodes)} 个节点，"
+            f"{len(program.wires)} 条连线",
+            6000,
+        )
 
     def _set_gx_sync_status(self, status, detail=""):
         labels = {
