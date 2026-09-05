@@ -29,6 +29,7 @@ a = Analysis(
         ('resources/config.default.json', '.'),
         ('resources/pattern_library.json', '.'),
         ('resources/plc_models.json', '.'),
+        ('resources/instructions/mitsubishi', 'resources/instructions/mitsubishi'),
         ('README.md', '.'),
         ('resources/app.ico', '.'),
         ('resources/assets/codicons', 'assets/codicons'),
