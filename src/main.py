@@ -88,6 +88,11 @@ from codicons import (
     set_codicon,
 )
 from confirmed_spec import canonicalize_confirmed_spec
+from contract_repair import (
+    build_contract_repair_plan,
+    format_contract_repair_plan,
+    patch_device_addresses,
+)
 from display_names import (
     DisplayTextStream,
     naturalize_display_text,
@@ -1955,6 +1960,19 @@ class CompilerThread(QThread):
                             "$.device_comments: repair changed evidence-external "
                             "addresses " + ", ".join(sorted(outside_comments))
                         )
+                if self.repair_mode and self.task_type == "contract_repair":
+                    if parsed.get("delete_rung_ids"):
+                        raise PLCJsonValidationError(
+                            "$.delete_rung_ids: contract repair may not delete existing rungs"
+                        )
+                    if self.allowed_addresses:
+                        referenced_addresses = patch_device_addresses(parsed)
+                        outside_devices = referenced_addresses - self.allowed_addresses
+                        if outside_devices:
+                            raise PLCJsonValidationError(
+                                "$.rungs: contract repair introduced out-of-scope devices "
+                                + ", ".join(sorted(outside_devices))
+                            )
                 if self.target_mode == "ladder" and parsed.get("mode") == "partial":
                     validate_ladder_partial(parsed, plc_model=self.plc_model)
                     if self.previous_json is None:
@@ -2006,6 +2024,8 @@ class CompilerThread(QThread):
                             confirmed_spec=self.confirmed_context,
                         )
                     except ApproachContractValidationError as contract_error:
+                        if self.task_type == "contract_repair":
+                            raise
                         contract_mismatch = {
                             "message": str(contract_error),
                             "approach_name": contract_error.approach_name,
@@ -2052,6 +2072,13 @@ class CompilerThread(QThread):
             try:
                 parsed_json = parse_and_validate(json_str)
             except Exception as first_err:
+                if self.task_type == "contract_repair":
+                    self.failure.emit(
+                        self.task_id,
+                        "方案约束修复候选未通过验证，不会继续隐藏重试: "
+                        f"{first_err}",
+                    )
+                    return
                 if self.target_mode != "ladder":
                     self.failure.emit(
                         self.task_id, f"模型输出 JSON 校验失败: {first_err}"
@@ -2216,7 +2243,12 @@ class CompilerThread(QThread):
                 )
                 validate_plc_ir(
                     program_ir,
-                    confirmed_spec=self.confirmed_context,
+                    confirmed_spec=(
+                        None
+                        if contract_mismatch
+                        and self.task_type != "contract_repair"
+                        else self.confirmed_context
+                    ),
                 )
                 from plc_semantics import (
                     SEMANTICS_SCHEMA_VERSION,
@@ -7631,6 +7663,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "parent_version_id": task.get("parent_version_id"),
             "source_report_id": task.get("source_report_id"),
             "selected_finding_ids": task.get("selected_finding_ids", []),
+            "contract_repair_plan": task.get("contract_repair_plan"),
         }
         if isinstance(basic_report, dict):
             basic_report = copy.deepcopy(basic_report)
@@ -7915,6 +7948,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return
         if not self.current_project_id or not self.current_version_id:
             return
+
         project_id = self.current_project_id
         version_id = self.current_version_id
         project = self.store.get_project(project_id)
@@ -7925,6 +7959,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         if not mismatch:
             self.statusBar().showMessage("当前版本没有待修复的方案约束。", 4000)
             return
+
         selected = self._version_with_json(project, version_id)
         if not selected or not isinstance(selected[1], dict):
             self.statusBar().showMessage("当前版本没有可修复的梯形图 JSON。", 4000)
@@ -7938,22 +7973,65 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 "当前版本缺少已确认规格快照，不能自动修改实现方案。",
             )
             return
-        issues = mismatch.get("issues") or [
-            mismatch.get("message", "方案约束未满足")
-        ]
-        issue_text = "；".join(str(item) for item in issues if item)
+
+        plc_model = (
+            version.get("plc_model")
+            or project.get("plc_model")
+            or "FX3U"
+        )
+        try:
+            plan = build_contract_repair_plan(
+                previous_json,
+                confirmed_spec,
+                plc_model=plc_model,
+                mismatch=mismatch,
+            )
+        except Exception as error:
+            QMessageBox.warning(
+                self,
+                "无法建立修复计划",
+                naturalize_display_text(error),
+            )
+            return
+
+        if plan.get("repairability") == "not_needed":
+            QMessageBox.information(
+                self,
+                "无需修复",
+                "重新检查后当前程序已经满足 generation_contract。",
+            )
+            return
+
+        if plan.get("repairability") != "scoped_patch":
+            details = "\n".join(
+                f"• {item.get('kind')}: {item.get('value')}"
+                for item in (plan.get("violations") or [])
+            )
+            QMessageBox.warning(
+                self,
+                "无法安全自动修复",
+                (
+                    f"{plan.get('reason', '当前约束缺少可定位的语义上下文')}\n\n"
+                    f"{details}\n\n"
+                    "系统不会再让 AI 猜测 MOV/SET/RST 等指令应该放在哪里。\n"
+                    "请在已确认方案中补充目标软元件、状态寄存器或具体实现语义后再生成。"
+                ),
+            )
+            return
+
         csv_name = (version.get("artifacts") or {}).get(
             "program_csv", "program.csv"
         )
         answer = QMessageBox.question(
             self,
-            "确认修复方案约束",
+            "确认受限方案约束修复",
             (
                 f"基础版本：{version_display_name(version_id)}\n"
                 f"原始 CSV 已保留：{csv_name}\n\n"
-                "你可以先导出或同步这个 CSV 到 GX Works2 检查。\n\n"
-                f"待修复：{issue_text}\n\n"
-                "确认后会基于当前版本创建一个新的修复版本，不覆盖原始 CSV。"
+                "这次不会重新生成整份程序，只允许修改计划中的既有梯级，"
+                "并禁止引入计划外软元件。\n\n"
+                f"{format_contract_repair_plan(plan)}\n\n"
+                "确认后创建一个新的修复版本；原始 CSV 不会覆盖。"
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -7965,57 +8043,65 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return
 
         new_version_id, output_dir = self.store.prepare_version(project_id)
-        plc_model = (
-            version.get("plc_model")
-            or project.get("plc_model")
-            or "FX3U"
-        )
-        request = (
-            f"目标 PLC 型号：{plc_model}\n"
-            "基于当前版本，仅修复以下已确认 generation_contract 方案约束问题："
-            f"{issue_text}。保持其余逻辑、I/O、参数、地址和已选方案不变；"
-            "不得重新分析需求，不得用功能等价方案替换用户指定的必用指令或结构。"
-        )
+        audit_plan = {
+            key: copy.deepcopy(plan.get(key))
+            for key in (
+                "plan_id",
+                "repairability",
+                "approach_name",
+                "violations",
+                "allowed_rung_ids",
+                "allowed_addresses",
+                "scope_reasons",
+                "fallback_scope",
+            )
+        }
         task_id = f"{project_id}:{new_version_id}"
         self.active_task = {
             "id": task_id,
             "project_id": project_id,
             "version_id": new_version_id,
             "phase": "compile",
-            "summary": f"方案约束修复：{issue_text[:80]}",
+            "summary": f"方案约束受限修复：{plan.get('plan_id')}",
             "parent_version_id": version_id,
             "confirmed_spec_snapshot": copy.deepcopy(confirmed_spec),
             "confirmed_spec_hash": self._json_sha256(confirmed_spec),
             "plc_model": plc_model,
+            "contract_repair_plan": audit_plan,
         }
         self.store.add_message(
             project_id,
             "assistant",
             (
-                f"已确认基于{version_display_name(version_id)}修复方案约束；"
+                f"已确认基于{version_display_name(version_id)}执行受限方案约束修复；"
+                f"允许修改梯级 {', '.join(map(str, plan['allowed_rung_ids']))}。"
                 "原始版本和 CSV 保持不变。"
             ),
             kind="system",
         )
-        self._set_busy(True, "正在修复方案约束")
+        self._set_busy(True, "正在执行受限方案约束修复")
         self.activity_panel.reset()
-        self.activity_panel.set_status("正在基于原始 CSV 对应版本生成修复版本")
+        self.activity_panel.set_status("AI 正在生成受限 partial patch")
+
         thread = CompilerThread(
             task_id,
-            request,
-            None,
+            plan["prompt"],
+            "high",
             "ladder",
             output_dir,
             previous_json=previous_json,
             previous_ir=self.store.load_program_ir(project_id, version_id),
             conversation_history=[],
             confirmed_context=confirmed_spec,
-            task_type="edit",
+            task_type="contract_repair",
             current_version_json=previous_json,
             plc_model=plc_model,
-            program_name="MAIN",
+            program_name=version.get("program_name") or "MAIN",
             revision=int(str(new_version_id).lstrip("vV") or "1"),
-            requirement_text=request,
+            requirement_text=str(confirmed_spec.get("summary") or ""),
+            repair_mode=True,
+            allowed_rung_ids=plan["allowed_rung_ids"],
+            allowed_addresses=plan["allowed_addresses"],
         )
         self._retain_worker_thread("_compiler_thread", thread)
         thread.thinking_updated.connect(self._append_reasoning)
