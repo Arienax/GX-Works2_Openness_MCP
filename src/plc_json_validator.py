@@ -1,6 +1,8 @@
 import json
 import re
 
+from instruction_registry import DEFAULT_INSTRUCTION_REGISTRY, InstructionCategory
+
 
 SUPPORTED_PLC_MODELS = {"FX3U", "FX5U"}
 
@@ -138,100 +140,36 @@ RESERVED_SPECIAL_DEVICE_RANGES = {
 }
 
 
-# Only operands with write semantics are checked.  A read-only device is still
-# valid as a source/condition operand, just as it is valid as an input contact.
+# Instruction semantics are no longer duplicated here.  These compatibility
+# views are derived from the shared registry so existing imports/tests that
+# inspect the constants keep working while all three layers share one source of
+# truth.
 APP_INSTR_WRITE_OPERAND_INDEXES = {
-    "SET": (0,),
-    "RST": (0,),
-    "MOV": (1,),
-    "DMOV": (1,),
-    "EMOV": (1,),
-    "BMOV": (1,),
-    "FMOV": (1,),
-    "ADD": (2,),
-    "DADD": (2,),
-    "EADD": (2,),
-    "DEADD": (2,),
-    "SUB": (2,),
-    "DSUB": (2,),
-    "ESUB": (2,),
-    "DESUB": (2,),
-    "MUL": (2,),
-    "DMUL": (2,),
-    "EMUL": (2,),
-    "DEMUL": (2,),
-    "DIV": (2,),
-    "DDIV": (2,),
-    "EDIV": (2,),
-    "DEDIV": (2,),
-    "WAND": (2,),
-    "WOR": (2,),
-    "WXOR": (2,),
-    "CMP": (2,),
-    "DCMP": (2,),
-    "ZCP": (3,),
-    "DZCP": (3,),
-    "SFTL": (1,),
-    "SFTLP": (1,),
-    "SFTR": (1,),
-    "SFTRP": (1,),
-    "INC": (0,),
-    "DINC": (0,),
-    "DEC": (0,),
-    "DDEC": (0,),
-    "NEG": (0,),
-    "DNEG": (0,),
-    "FLT": (1,),
-    "DFLT": (1,),
-    "INT": (1,),
-    "DINT": (1,),
-    "FROM": (2,),
-    # RD3A m1 m2 D: the third operand is the local destination word.
-    "RD3A": (2,),
-    "RD3AP": (2,),
-    "PID": (3,),
-    "HSCS": (2,),
-    "HSCR": (2,),
-    "HSZ": (3,),
-    "DHSZ": (3,),
+    mnemonic: DEFAULT_INSTRUCTION_REGISTRY.write_indexes(mnemonic)
+    for mnemonic in DEFAULT_INSTRUCTION_REGISTRY.known_mnemonics()
+    if DEFAULT_INSTRUCTION_REGISTRY.write_indexes(mnemonic)
 }
 
-# APP_INSTR is a controlled interchange form, not an escape hatch for arbitrary
-# text.  This whitelist is intentionally limited to instructions understood by
-# the current generator/validator.  Model-specific checks below further reject
-# entries such as ZRN on FX5U and DRVTBL on FX3U.
-APP_INSTR_WHITELIST = frozenset(APP_INSTR_WRITE_OPERAND_INDEXES) | frozenset(
-    {
-        # Data conversion/exchange and block/module access.
-        "CML", "DCML", "XCH", "DXCH", "SWAP",
-        "BCD", "DBCD", "BIN", "DBIN", "GRY", "DGRY", "GBIN", "DGBIN",
-        "FLT", "DFLT", "INT", "DINT",
-        "TO", "DTO", "DFROM", "WR3A", "WR3AP",
-        # Rotate/shift and data processing.
-        "ROR", "ROL", "RCR", "RCL", "DROR", "DROL", "DRCR", "DRCL",
-        "WSFR", "WSFL", "SORT", "DSORT", "SUM", "DSUM", "MEAN", "DMEAN",
-        "RAMP", "DRAMP", "ROTC",
-        # Program/communication helpers represented by the current schema.
-        "CJ", "CALL", "SRET", "IRET", "EI", "DI", "FEND", "WDT",
-        "FOR", "NEXT", "MC", "MCR", "RS", "RS2", "MODRW", "ADPRW",
-        "ECMP", "DECMP", "EZCP", "DEZCP",
-        # High-speed counting, pulse output, and positioning.
-        "SPD", "HSCT", "PLSY", "DPLSY", "PLSR", "DPLSR", "PLSV",
-        "DRVI", "DDRVI", "DRVA", "DDRVA", "DVIT", "ZRN", "DSZR", "PWM",
-        # FX5U-only entries currently exposed by the model profile.
-        "DRVTBL", "DRVMUL", "MC_MOVEABSOLUTE",
-    }
+_APP_INSTR_TYPED_ONLY = frozenset({"OUT", "PLS", "PLF", "END"})
+_APP_INSTR_FORBIDDEN_CATEGORIES = frozenset(
+    {InstructionCategory.CONDITION, InstructionCategory.BRANCH_CONTROL}
 )
-
-# Operand counts documented by JY997D16601 Rev.R, FNC176/FNC177.  Keeping
-# these explicit prevents a valid mnemonic with prose-like or incomplete
-# operands from passing merely because the opcode itself is known.
+APP_INSTR_WHITELIST = frozenset(
+    mnemonic
+    for mnemonic in DEFAULT_INSTRUCTION_REGISTRY.known_mnemonics()
+    if mnemonic not in _APP_INSTR_TYPED_ONLY
+    and DEFAULT_INSTRUCTION_REGISTRY.category_of(mnemonic)
+    not in _APP_INSTR_FORBIDDEN_CATEGORIES
+)
 APP_INSTR_EXACT_OPERAND_COUNTS = {
-    "RD3A": 3,
-    "RD3AP": 3,
-    "WR3A": 3,
-    "WR3AP": 3,
+    mnemonic: spec.min_operands
+    for mnemonic in APP_INSTR_WHITELIST
+    for spec in [DEFAULT_INSTRUCTION_REGISTRY.resolve(mnemonic)]
+    if spec is not None
+    and spec.min_operands is not None
+    and spec.min_operands == spec.max_operands
 }
+APP_INSTR_OPCODE_RE = re.compile(r"^[A-Z0-9_.$@+\-]+$", re.IGNORECASE)
 
 # Operand layouts that can be checked without guessing run-time register
 # values.  Each value is (frequency operand indexes, pulse-output index,
@@ -402,7 +340,8 @@ def _validate_writable_device(value, path, plc_model="FX3U"):
 def _validate_app_instruction_write_targets(
     opcode, operands, path, plc_model="FX3U"
 ):
-    indexes = APP_INSTR_WRITE_OPERAND_INDEXES.get(opcode, ())
+    spec = DEFAULT_INSTRUCTION_REGISTRY.resolve(opcode)
+    indexes = spec.write_indexes if spec is not None else ()
     for operand_idx in indexes:
         if operand_idx >= len(operands):
             continue
@@ -498,7 +437,26 @@ def _validate_comments(comments, path, plc_model="FX3U"):
         _check_text_length(comment, f"{path}.{addr}")
 
 
-def _validate_element(elem, path, allowed_types, is_output=False, plc_model="FX3U"):
+def _app_instr_arity_error(spec, actual_count):
+    minimum = spec.min_operands
+    maximum = spec.max_operands
+    if minimum is not None and maximum is not None and minimum == maximum:
+        return f"{spec.mnemonic} requires exactly {minimum} operands; received {actual_count}"
+    if minimum is not None and actual_count < minimum:
+        return f"{spec.mnemonic} requires at least {minimum} operands; received {actual_count}"
+    if maximum is not None and actual_count > maximum:
+        return f"{spec.mnemonic} accepts at most {maximum} operands; received {actual_count}"
+    return f"{spec.mnemonic} operand count {actual_count} is not supported"
+
+
+def _validate_element(
+    elem,
+    path,
+    allowed_types,
+    is_output=False,
+    plc_model="FX3U",
+    require_catalogued_instructions=True,
+):
     _require_dict(elem, path)
     elem_type = elem.get("type")
     if elem_type not in allowed_types:
@@ -519,6 +477,7 @@ def _validate_element(elem, path, allowed_types, is_output=False, plc_model="FX3
                     f"{path}.branches[{b_idx}][{e_idx}]",
                     VALID_INPUT_TYPES - {"parallel_block"},
                     plc_model=plc_model,
+                    require_catalogued_instructions=require_catalogued_instructions,
                 )
         return
 
@@ -578,39 +537,66 @@ def _validate_element(elem, path, allowed_types, is_output=False, plc_model="FX3
         operands = elem.get("operands", [])
         _require_list(operands, f"{path}.operands")
         opcode = str(opcode).strip().upper()
-        if opcode == "OUT":
+        if len(opcode) > 64 or not APP_INSTR_OPCODE_RE.fullmatch(opcode):
+            _fail(f"{path}.opcode", f"invalid APP_INSTR opcode token {opcode!r}")
+        if opcode in _APP_INSTR_TYPED_ONLY:
+            if opcode == "OUT":
+                _fail(
+                    f"{path}.opcode",
+                    "OUT is represented by the typed COIL, TIMER, or COUNTER "
+                    "output object in this JSON schema; it must not be encoded "
+                    "as APP_INSTR",
+                )
             _fail(
                 f"{path}.opcode",
-                "OUT is represented by the typed COIL, TIMER, or COUNTER "
-                "output object in this JSON schema; it must not be encoded "
-                "as APP_INSTR",
+                f"{opcode} has a dedicated ladder representation and must not "
+                "be encoded as APP_INSTR",
             )
-        if opcode not in APP_INSTR_WHITELIST:
-            _fail(
-                f"{path}.opcode",
-                f"unsupported APP_INSTR opcode {opcode!r}; use a whitelisted "
-                "PLC instruction instead of free-form text",
-            )
-        exact_operand_count = APP_INSTR_EXACT_OPERAND_COUNTS.get(opcode)
-        if exact_operand_count is not None and len(operands) != exact_operand_count:
-            _fail(
-                f"{path}.operands",
-                f"{opcode} requires exactly {exact_operand_count} operands; "
-                f"received {len(operands)}",
-            )
+
+        spec = DEFAULT_INSTRUCTION_REGISTRY.resolve(opcode)
+        if spec is None:
+            if require_catalogued_instructions:
+                _fail(
+                    f"{path}.opcode",
+                    f"unsupported APP_INSTR opcode {opcode!r}; add a verified "
+                    "instruction definition to the registry before generation",
+                )
+        else:
+            if spec.category in _APP_INSTR_FORBIDDEN_CATEGORIES:
+                _fail(
+                    f"{path}.opcode",
+                    f"{opcode} is a {spec.category.value} instruction and cannot "
+                    "be represented as an APP_INSTR output",
+                )
+            model = normalize_plc_model(plc_model)
+            if not spec.supports_cpu(model):
+                if model == "FX5U" and opcode == "ZRN":
+                    _fail(f"{path}.opcode", "ZRN is not supported by FX5U; use DSZR")
+                if model == "FX3U" and (
+                    opcode in {"DRVTBL", "DRVMUL"} or opcode.startswith("MC_")
+                ):
+                    _fail(
+                        f"{path}.opcode",
+                        f"{opcode} is an FX5U instruction and is not supported by FX3U",
+                    )
+                supported = ", ".join(sorted(spec.cpu_support)) or "another CPU family"
+                _fail(
+                    f"{path}.opcode",
+                    f"{opcode} is not supported by {model}; catalogue support: {supported}",
+                )
+            if not spec.accepts_arity(len(operands)):
+                _fail(f"{path}.operands", _app_instr_arity_error(spec, len(operands)))
+
         model = normalize_plc_model(plc_model)
-        if model == "FX5U" and opcode == "ZRN":
-            _fail(f"{path}.opcode", "ZRN is not supported by FX5U; use DSZR")
-        if model == "FX3U" and (
-            opcode in {"DRVTBL", "DRVMUL"} or opcode.startswith("MC_")
-        ):
-            _fail(f"{path}.opcode", f"{opcode} is an FX5U instruction and is not supported by FX3U")
         _validate_shift_operands(opcode, operands, path, plc_model)
         for operand_idx, operand in enumerate(operands):
             if isinstance(operand, str) and DEVICE_ADDRESS_RE.fullmatch(operand.strip()):
                 _validate_device_address(
                     operand, f"{path}.operands[{operand_idx}]", plc_model
                 )
+        # Unknown instructions imported from GX Works2 deliberately have no
+        # guessed write semantics.  Known instructions obtain write roles from
+        # the registry.
         _validate_app_instruction_write_targets(
             opcode, operands, path, plc_model
         )
@@ -649,7 +635,12 @@ def _validate_element(elem, path, allowed_types, is_output=False, plc_model="FX3
         _fail(f"{path}.value", f"{elem_type} output requires value")
 
 
-def _validate_rung(rung, path, plc_model="FX3U"):
+def _validate_rung(
+    rung,
+    path,
+    plc_model="FX3U",
+    require_catalogued_instructions=True,
+):
     _require_dict(rung, path)
     if "rung_id" not in rung:
         _fail(f"{path}.rung_id", "missing required field")
@@ -666,6 +657,7 @@ def _validate_rung(rung, path, plc_model="FX3U"):
             f"{path}.header_element",
             VALID_INPUT_TYPES - {"parallel_block"},
             plc_model=plc_model,
+            require_catalogued_instructions=require_catalogued_instructions,
         )
 
     shared_inputs = rung.get("shared_inputs", [])
@@ -676,6 +668,7 @@ def _validate_rung(rung, path, plc_model="FX3U"):
             f"{path}.shared_inputs[{e_idx}]",
             VALID_INPUT_TYPES - {"parallel_block"},
             plc_model=plc_model,
+            require_catalogued_instructions=require_catalogued_instructions,
         )
 
     branches = rung.get("branches")
@@ -696,6 +689,7 @@ def _validate_rung(rung, path, plc_model="FX3U"):
                 f"{path}.branches[{b_idx}].inputs[{e_idx}]",
                 VALID_INPUT_TYPES,
                 plc_model=plc_model,
+                require_catalogued_instructions=require_catalogued_instructions,
             )
         for e_idx, elem in enumerate(outputs):
             _validate_element(
@@ -704,6 +698,7 @@ def _validate_rung(rung, path, plc_model="FX3U"):
                 VALID_OUTPUT_TYPES,
                 is_output=True,
                 plc_model=plc_model,
+                require_catalogued_instructions=require_catalogued_instructions,
             )
 
 
@@ -1297,7 +1292,50 @@ def _validate_fx3u_analog_instruction_hardware(rungs, confirmed_spec):
                 )
 
 
-def validate_ladder_full(data, plc_model="FX3U", confirmed_spec=None):
+def find_unverified_app_instructions(data):
+    """Return catalogue misses without changing the historical ladder JSON.
+
+    This is intended for import/review UIs.  A GX Works2 import may preserve
+    these instructions in APP_INSTR form, while Agent generation remains strict
+    by default through ``require_catalogued_instructions=True``.
+    """
+
+    findings = []
+    if not isinstance(data, dict):
+        return findings
+    for rung_idx, rung in enumerate(data.get("rungs", []) or []):
+        if not isinstance(rung, dict):
+            continue
+        for branch_idx, branch in enumerate(rung.get("branches", []) or []):
+            if not isinstance(branch, dict):
+                continue
+            for output_idx, output in enumerate(branch.get("outputs", []) or []):
+                if not isinstance(output, dict) or output.get("type") != "APP_INSTR":
+                    continue
+                opcode = str(output.get("opcode", "") or "").strip().upper()
+                if opcode and DEFAULT_INSTRUCTION_REGISTRY.resolve(opcode) is None:
+                    findings.append(
+                        {
+                            "path": (
+                                f"$.rungs[{rung_idx}].branches[{branch_idx}]"
+                                f".outputs[{output_idx}]"
+                            ),
+                            "opcode": opcode,
+                            "operands": list(output.get("operands", []) or []),
+                            "status": "unverified",
+                            "edit_policy": "preserve_only",
+                        }
+                    )
+    return findings
+
+
+def validate_ladder_full(
+    data,
+    plc_model="FX3U",
+    confirmed_spec=None,
+    *,
+    require_catalogued_instructions=True,
+):
     plc_model = normalize_plc_model(plc_model)
     _require_dict(data, "$")
     allowed = {"device_comments", "rungs"}
@@ -1313,7 +1351,12 @@ def validate_ladder_full(data, plc_model="FX3U", confirmed_spec=None):
 
     seen_ids = set()
     for idx, rung in enumerate(data["rungs"]):
-        _validate_rung(rung, f"$.rungs[{idx}]", plc_model)
+        _validate_rung(
+            rung,
+            f"$.rungs[{idx}]",
+            plc_model,
+            require_catalogued_instructions=require_catalogued_instructions,
+        )
         rung_id = rung["rung_id"]
         if rung_id in seen_ids:
             _fail(f"$.rungs[{idx}].rung_id", f"duplicate rung_id {rung_id}")
@@ -1359,7 +1402,12 @@ def validate_ladder_full(data, plc_model="FX3U", confirmed_spec=None):
     return data
 
 
-def validate_ladder_partial(data, plc_model="FX3U"):
+def validate_ladder_partial(
+    data,
+    plc_model="FX3U",
+    *,
+    require_catalogued_instructions=True,
+):
     plc_model = normalize_plc_model(plc_model)
     _require_dict(data, "$")
     allowed = {"mode", "device_comments", "rungs", "delete_rung_ids"}
@@ -1375,7 +1423,12 @@ def validate_ladder_partial(data, plc_model="FX3U"):
     rungs = data.get("rungs", [])
     _require_list(rungs, "$.rungs")
     for idx, rung in enumerate(rungs):
-        _validate_rung(rung, f"$.rungs[{idx}]", plc_model)
+        _validate_rung(
+            rung,
+            f"$.rungs[{idx}]",
+            plc_model,
+            require_catalogued_instructions=require_catalogued_instructions,
+        )
     _validate_unique_coils(rungs)
 
     delete_ids = data.get("delete_rung_ids", [])
