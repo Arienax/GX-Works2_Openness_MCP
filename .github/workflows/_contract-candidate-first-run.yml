@@ -1,0 +1,53 @@
+name: Run contract candidate-first patch
+
+on:
+  push:
+    paths:
+      - ".github/workflows/_contract-candidate-first-run.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Apply staged source patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          workflow = Path(".github/workflows/_contract-candidate-first.yml").read_text(encoding="utf-8")
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n      - name: Syntax check"
+          start = workflow.index(start_marker) + len(start_marker)
+          end = workflow.index(end_marker, start)
+          patch_code = textwrap.dedent(workflow[start:end])
+          exec(compile(patch_code, "_contract_candidate_first_patch", "exec"), {})
+
+          Path("tests/test_contract_candidate_first.py").write_text(
+              '''from pathlib import Path\n\n\ndef test_contract_mismatch_is_materialized_before_user_repair_choice():\n    source = Path("src/main.py").read_text(encoding="utf-8")\n    assert "except ApproachContractValidationError as contract_error:" in source\n    assert '"contract_mismatch": (' in source\n    assert "保留原始候选并先生成 CSV" in source\n    assert "contract_repair_button" in source\n    assert "修复方案约束" in source\n    assert "def _repair_current_contract_mismatch(self):" in source\n    assert "原始版本和 CSV 保持不变" in source\n\n\ndef test_contract_mismatch_no_longer_enters_pre_csv_failure_route():\n    source = Path("src/main.py").read_text(encoding="utf-8")\n    compiler_start = source.index("class CompilerThread")\n    artifact_generation = source.index("generate_gx_works2_csv", compiler_start)\n    compiler_prefix = source[compiler_start:artifact_generation]\n    assert "should_auto_repair_validation_error(first_err)" not in compiler_prefix\n    assert "已跳过 AI 自动修复" not in compiler_prefix\n''',
+              encoding="utf-8",
+          )
+          PY
+      - name: Syntax check
+        run: python -m py_compile src/main.py src/plc_json_validator.py tests/test_contract_candidate_first.py
+      - name: Install pytest
+        run: python -m pip install pytest
+      - name: Run focused tests
+        run: pytest -q tests/test_contract_candidate_first.py tests/test_contract_implementation.py tests/test_contract_conflict_resolution.py tests/test_instruction_registry.py
+      - name: Commit implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/main.py tests/test_contract_candidate_first.py
+          git commit -m "fix: keep contract-mismatch CSV before repair choice"
+          git push origin HEAD:main
