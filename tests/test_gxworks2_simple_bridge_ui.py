@@ -24,3 +24,15 @@ def test_direct_pull_does_not_force_three_way_choice():
 def test_external_modification_points_to_advanced_sync():
     text = Path("src/gxworks2/import_service.py").read_text(encoding="utf-8")
     assert '请使用“高级同步”选择保留哪一方' in text
+
+
+def test_bridge_button_state_is_managed_as_one_group():
+    text = Path("src/main.py").read_text(encoding="utf-8")
+    assert "def _set_gx_action_buttons_enabled" in text
+    assert 'self._set_gx_action_buttons_enabled(False)' in text
+    assert 'self._update_gx_sync_button_enabled()' in text
+    assert 'self.setWindowTitle("GX Works2操作未完成")' in text
+    retry = text.split("if dialog.retry_requested:", 1)[1].split("return", 1)[0]
+    assert "self._set_gx_action_buttons_enabled(False)" in retry
+    assert "self.gxworks2_pull_button" in retry
+    assert "self.gxworks2_advanced_button" in retry

@@ -909,7 +909,7 @@ class GXWorks2SyncErrorDialog(QDialog):
         super().__init__(parent)
         self.result = result
         self.retry_requested = False
-        self.setWindowTitle("GX Works2同步未完成")
+        self.setWindowTitle("GX Works2操作未完成")
         self.setModal(True)
         self.setMinimumWidth(560)
         dialog_font = QFont("Microsoft YaHei")
@@ -6129,7 +6129,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             and has_contract_mismatch
             and self.active_task is None
         )
-        self.gxworks2_import_button.setEnabled(mode == "ladder")
+        self._update_gx_sync_button_enabled()
         self._set_gx_sync_status(
             "unknown" if mode == "ladder" else "unknown",
             "可直接写入或读取GX Works2；需要比较双方改动时使用“高级同步”" if mode == "ladder" else "ST版本不使用GX Works2梯形图同步",
@@ -6148,7 +6148,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.export_button.setEnabled(False)
         self.contract_repair_button.setEnabled(False)
         self.contract_repair_button.setVisible(False)
-        self.gxworks2_import_button.setEnabled(False)
+        self._set_gx_action_buttons_enabled(False)
         self._set_gx_sync_status("unknown")
         self.simulator_test_button.setEnabled(False)
         self.simulation_progress_panel.setVisible(False)
@@ -7897,7 +7897,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "assistant",
             (
                 f"程序和 CSV 已生成。版本：{task['version_id']}。"
-                "方案约束尚未满足；可以先导出/同步到 GX Works2 检查，"
+                "方案约束尚未满足；可以先导出或写入 GX Works2 检查，"
                 "再点击“修复方案约束”决定是否修复。"
                 if contract_mismatch
                 else f"程序已生成并通过校验。版本：{task['version_id']}"
@@ -8664,8 +8664,13 @@ class _IndustrialWorkbenchUI(QMainWindow):
             dialog.exec()
             if dialog.retry_requested:
                 self._gx_sync_retry_pending = True
-                self.gxworks2_import_button.setEnabled(False)
-                self.gxworks2_import_button.setText("准备重试…")
+                self._set_gx_action_buttons_enabled(False)
+                active_button = (
+                    self.gxworks2_pull_button
+                    if getattr(self, "_gx_sync_intent", "reconcile") == "pull"
+                    else self.gxworks2_advanced_button
+                )
+                active_button.setText("准备重试…")
                 if self._gxworks2_sync_thread is None:
                     QTimer.singleShot(0, self._run_pending_gx_sync_retry)
             return
