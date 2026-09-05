@@ -96,8 +96,8 @@ from display_names import (
     version_display_name,
 )
 from plc_json_validator import (
+    ApproachContractValidationError,
     PLCJsonValidationError,
-    should_auto_repair_validation_error,
     validate_ladder_full,
     validate_ladder_partial,
     validate_st_json,
@@ -1821,6 +1821,7 @@ class CompilerThread(QThread):
 
             self.output_dir.mkdir(parents=True, exist_ok=True)
             validation_messages = []
+            contract_mismatch = None
             semantic_requirements = []
             if self.target_mode == "ladder":
                 from plc_semantics import semantic_requirements_from_spec
@@ -1977,6 +1978,8 @@ class CompilerThread(QThread):
                 return parsed
 
             def parse_and_validate(candidate):
+                nonlocal contract_mismatch
+                contract_mismatch = None
                 parsed = parse_candidate(candidate)
                 if self.target_mode == "ladder":
                     parsed, converted_counters = normalize_legacy_counter_outputs(parsed)
@@ -1996,11 +1999,31 @@ class CompilerThread(QThread):
                             + ", ".join(map(str, normalized_rungs))
                         )
                     emit_parsing_progress("正在解析模型输出：执行 PLC 硬校验")
-                    validate_ladder_full(
-                        parsed,
-                        plc_model=self.plc_model,
-                        confirmed_spec=self.confirmed_context,
-                    )
+                    try:
+                        validate_ladder_full(
+                            parsed,
+                            plc_model=self.plc_model,
+                            confirmed_spec=self.confirmed_context,
+                        )
+                    except ApproachContractValidationError as contract_error:
+                        contract_mismatch = {
+                            "message": str(contract_error),
+                            "approach_name": contract_error.approach_name,
+                            "issues": list(contract_error.issues),
+                            "repairable": True,
+                        }
+                        validation_messages.append(str(contract_error))
+                        self.progress_updated.emit(
+                            self.task_id,
+                            {
+                                "stage": "contract_mismatch",
+                                "severity": "warning",
+                                "message": (
+                                    "方案约束未满足；保留原始候选并先生成 CSV，"
+                                    "不会自动修复，等待用户决定。"
+                                ),
+                            },
+                        )
                     if semantic_requirements:
                         from plc_semantics import strict_semantic_gaps
 
@@ -2029,25 +2052,6 @@ class CompilerThread(QThread):
             try:
                 parsed_json = parse_and_validate(json_str)
             except Exception as first_err:
-                if not should_auto_repair_validation_error(first_err):
-                    validation_messages.append(str(first_err))
-                    self.progress_updated.emit(
-                        self.task_id,
-                        {
-                            "stage": "contract_mismatch",
-                            "severity": "error",
-                            "message": (
-                                "生成结果未满足已确认方案约束；"
-                                "不会启动 AI 自动修复，请明确重新生成或手动修复。"
-                            ),
-                        },
-                    )
-                    self.failure.emit(
-                        self.task_id,
-                        "生成结果未满足已确认方案约束，已跳过 AI 自动修复: "
-                        f"{first_err}",
-                    )
-                    return
                 if self.target_mode != "ladder":
                     self.failure.emit(
                         self.task_id, f"模型输出 JSON 校验失败: {first_err}"
@@ -2350,8 +2354,17 @@ class CompilerThread(QThread):
                         "width": int(drawer.width),
                         "height": int(drawer.height),
                         "artifacts": artifacts,
+                        "contract_mismatch": (
+                            copy.deepcopy(contract_mismatch)
+                            if contract_mismatch
+                            else None
+                        ),
                         "validation": {
-                            "status": "passed",
+                            "status": (
+                                "contract_mismatch"
+                                if contract_mismatch
+                                else "passed"
+                            ),
                             "messages": validation_messages
                             or ["结构、指令参数和双线圈校验已通过"],
                         },
@@ -3141,9 +3154,14 @@ class PLCSystemUI(QMainWindow):
             return
         self.compile_btn.setEnabled(True)
         self.compile_btn.setText("分析并生成")
-        self.thinking_panel.set_status("已完成")
-        self.result_status.setText("生成完成 · 校验通过")
         self._last_result = dict(result or {})
+        contract_mismatch = self._last_result.get("contract_mismatch")
+        if contract_mismatch:
+            self.thinking_panel.set_status("方案约束待处理")
+            self.result_status.setText("CSV 已生成 · 方案约束待处理")
+        else:
+            self.thinking_panel.set_status("已完成")
+            self.result_status.setText("生成完成 · 校验通过")
         self._last_target_mode = self._last_result.get("target_mode")
         try:
             artifacts = self._last_result.get("artifacts", {})
@@ -3165,11 +3183,54 @@ class PLCSystemUI(QMainWindow):
                     if self._current_plc_model() == "FX5U"
                     else "梯形图与 GX Works2 语句表"
                 )
-                QMessageBox.information(
-                    self,
-                    "成功",
-                    f"{gx_tool}生成成功，结构和型号硬校验已通过！",
-                )
+                if contract_mismatch:
+                    issues = contract_mismatch.get("issues") or [
+                        contract_mismatch.get("message", "方案约束未满足")
+                    ]
+                    issue_text = "；".join(str(item) for item in issues if item)
+                    program_csv_path = self._active_output_dir / artifacts.get(
+                        "program_csv", "program.csv"
+                    )
+                    answer = QMessageBox.question(
+                        self,
+                        "CSV 已生成，方案约束待处理",
+                        (
+                            "原始程序已经生成，CSV 不会因为方案约束问题被丢弃。\n"
+                            f"CSV：{program_csv_path}\n\n"
+                            "你可以先切换到 GX Works2 导入并检查这个版本。\n\n"
+                            f"未满足的方案约束：{issue_text}\n\n"
+                            "是否让 AI 基于当前结果进行修复？"
+                        ),
+                        QMessageBox.StandardButton.Yes
+                        | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    if (
+                        answer == QMessageBox.StandardButton.Yes
+                        and self._last_ladder_json is not None
+                        and self._last_confirmed_spec is not None
+                    ):
+                        repair_request = (
+                            "基于当前已生成梯形图，仅修复以下已确认方案约束问题："
+                            f"{issue_text}。保持其余逻辑、I/O、参数和已选方案不变；"
+                            "不得重新分析需求或更换实现方案。"
+                        )
+                        previous = copy.deepcopy(self._last_ladder_json)
+                        confirmed = copy.deepcopy(self._last_confirmed_spec)
+                        QTimer.singleShot(
+                            0,
+                            lambda req=repair_request, prev=previous, spec=confirmed: (
+                                self._launch_compiler(
+                                    req, "high", "ladder", prev, spec
+                                )
+                            ),
+                        )
+                else:
+                    QMessageBox.information(
+                        self,
+                        "成功",
+                        f"{gx_tool}生成成功，结构和型号硬校验已通过！",
+                    )
             elif self._last_target_mode == "st":
                 output_path = self._active_output_dir / artifacts.get("st", "")
                 self.display_container.setCurrentIndex(1)
@@ -4997,6 +5058,13 @@ class _IndustrialWorkbenchUI(QMainWindow):
         set_codicon(self.export_button, "export", "导出当前版本", 10)
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self._export_current_version)
+        self.contract_repair_button = QPushButton("修复方案约束")
+        self.contract_repair_button.setObjectName("PrimaryButton")
+        self.contract_repair_button.setEnabled(False)
+        self.contract_repair_button.setVisible(False)
+        self.contract_repair_button.clicked.connect(
+            self._repair_current_contract_mismatch
+        )
         self.gxworks2_sync_status = QLabel("GX：未检查")
         self.gxworks2_sync_status.setObjectName("SectionCaption")
         self.gxworks2_sync_status.setToolTip(
@@ -5039,6 +5107,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(8)
         actions.addWidget(self.export_button)
+        actions.addWidget(self.contract_repair_button)
         actions.addWidget(self.gxworks2_sync_status)
         actions.addWidget(self.gxworks2_import_button)
         actions.addWidget(self.simulator_test_button)
@@ -5805,6 +5874,15 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self.artifact_tabs.setTabIcon(3, codicon_icon("code"))
             self.artifact_tabs.setTabText(3, "ST")
         self.export_button.setEnabled(True)
+        has_contract_mismatch = bool(version.get("contract_mismatch"))
+        self.contract_repair_button.setVisible(
+            mode == "ladder" and has_contract_mismatch
+        )
+        self.contract_repair_button.setEnabled(
+            mode == "ladder"
+            and has_contract_mismatch
+            and self.active_task is None
+        )
         self.gxworks2_import_button.setEnabled(mode == "ladder")
         self._set_gx_sync_status(
             "unknown" if mode == "ladder" else "unknown",
@@ -5822,6 +5900,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.source_view.clear()
         self.artifact_caption.setText("尚未生成")
         self.export_button.setEnabled(False)
+        self.contract_repair_button.setEnabled(False)
+        self.contract_repair_button.setVisible(False)
         self.gxworks2_import_button.setEnabled(False)
         self._set_gx_sync_status("unknown")
         self.simulator_test_button.setEnabled(False)
@@ -7535,6 +7615,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         if not task or task["id"] != task_id:
             return
         result = dict(result)
+        contract_mismatch = result.get("contract_mismatch")
         basic_report = result.pop("inspection_report", None)
         metadata = {
             **result,
@@ -7567,7 +7648,13 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.store.add_message(
             task["project_id"],
             "assistant",
-            f"程序已生成并通过校验。版本：{task['version_id']}",
+            (
+                f"程序和 CSV 已生成。版本：{task['version_id']}。"
+                "方案约束尚未满足；可以先导出/同步到 GX Works2 检查，"
+                "再点击“修复方案约束”决定是否修复。"
+                if contract_mismatch
+                else f"程序已生成并通过校验。版本：{task['version_id']}"
+            ),
             kind="generation",
             metadata={"version_id": task["version_id"]},
         )
@@ -7618,10 +7705,21 @@ class _IndustrialWorkbenchUI(QMainWindow):
         version_id = task["version_id"]
         self._stop_repair_status_timer()
         self.active_task = None
-        self._set_busy(False, "生成完成")
-        self.activity_panel.set_status("生成完成")
+        completion_status = (
+            "CSV 已生成 · 方案约束待处理"
+            if contract_mismatch
+            else "生成完成"
+        )
+        self._set_busy(False, completion_status)
+        self.activity_panel.set_status(completion_status)
         self.statusBar().showMessage(
-            f"{version_display_name(version_id)}已生成并保存", 5000
+            (
+                f"{version_display_name(version_id)}原始 CSV 已保存；"
+                "可先导入 GX Works2，再决定是否修复"
+                if contract_mismatch
+                else f"{version_display_name(version_id)}已生成并保存"
+            ),
+            7000 if contract_mismatch else 5000,
         )
         self._refresh_projects(self.current_project_id)
         if self.current_project_id == project_id:
@@ -7810,6 +7908,124 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 )
                 return False
         return False
+
+    def _repair_current_contract_mismatch(self):
+        if self.active_task:
+            self.statusBar().showMessage("当前已有任务运行。", 3000)
+            return
+        if not self.current_project_id or not self.current_version_id:
+            return
+        project_id = self.current_project_id
+        version_id = self.current_version_id
+        project = self.store.get_project(project_id)
+        version = self.store.get_version(project_id, version_id)
+        if not project or not version:
+            return
+        mismatch = version.get("contract_mismatch") or {}
+        if not mismatch:
+            self.statusBar().showMessage("当前版本没有待修复的方案约束。", 4000)
+            return
+        selected = self._version_with_json(project, version_id)
+        if not selected or not isinstance(selected[1], dict):
+            self.statusBar().showMessage("当前版本没有可修复的梯形图 JSON。", 4000)
+            return
+        _version, previous_json = selected
+        confirmed_spec = self._version_confirmed_spec(version)
+        if not confirmed_spec:
+            QMessageBox.warning(
+                self,
+                "无法修复",
+                "当前版本缺少已确认规格快照，不能自动修改实现方案。",
+            )
+            return
+        issues = mismatch.get("issues") or [
+            mismatch.get("message", "方案约束未满足")
+        ]
+        issue_text = "；".join(str(item) for item in issues if item)
+        csv_name = (version.get("artifacts") or {}).get(
+            "program_csv", "program.csv"
+        )
+        answer = QMessageBox.question(
+            self,
+            "确认修复方案约束",
+            (
+                f"基础版本：{version_display_name(version_id)}\n"
+                f"原始 CSV 已保留：{csv_name}\n\n"
+                "你可以先导出或同步这个 CSV 到 GX Works2 检查。\n\n"
+                f"待修复：{issue_text}\n\n"
+                "确认后会基于当前版本创建一个新的修复版本，不覆盖原始 CSV。"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if not self._ensure_api_configured():
+            self.statusBar().showMessage("修复需要先完成 API 配置。", 4000)
+            return
+
+        new_version_id, output_dir = self.store.prepare_version(project_id)
+        plc_model = (
+            version.get("plc_model")
+            or project.get("plc_model")
+            or "FX3U"
+        )
+        request = (
+            f"目标 PLC 型号：{plc_model}\n"
+            "基于当前版本，仅修复以下已确认 generation_contract 方案约束问题："
+            f"{issue_text}。保持其余逻辑、I/O、参数、地址和已选方案不变；"
+            "不得重新分析需求，不得用功能等价方案替换用户指定的必用指令或结构。"
+        )
+        task_id = f"{project_id}:{new_version_id}"
+        self.active_task = {
+            "id": task_id,
+            "project_id": project_id,
+            "version_id": new_version_id,
+            "phase": "compile",
+            "summary": f"方案约束修复：{issue_text[:80]}",
+            "parent_version_id": version_id,
+            "confirmed_spec_snapshot": copy.deepcopy(confirmed_spec),
+            "confirmed_spec_hash": self._json_sha256(confirmed_spec),
+            "plc_model": plc_model,
+        }
+        self.store.add_message(
+            project_id,
+            "assistant",
+            (
+                f"已确认基于{version_display_name(version_id)}修复方案约束；"
+                "原始版本和 CSV 保持不变。"
+            ),
+            kind="system",
+        )
+        self._set_busy(True, "正在修复方案约束")
+        self.activity_panel.reset()
+        self.activity_panel.set_status("正在基于原始 CSV 对应版本生成修复版本")
+        thread = CompilerThread(
+            task_id,
+            request,
+            None,
+            "ladder",
+            output_dir,
+            previous_json=previous_json,
+            previous_ir=self.store.load_program_ir(project_id, version_id),
+            conversation_history=[],
+            confirmed_context=confirmed_spec,
+            task_type="edit",
+            current_version_json=previous_json,
+            plc_model=plc_model,
+            program_name="MAIN",
+            revision=int(str(new_version_id).lstrip("vV") or "1"),
+            requirement_text=request,
+        )
+        self._retain_worker_thread("_compiler_thread", thread)
+        thread.thinking_updated.connect(self._append_reasoning)
+        thread.content_updated.connect(self._append_content)
+        thread.progress_updated.connect(self._progress_updated)
+        thread.success.connect(self._compile_success)
+        thread.failure.connect(self._compile_failure)
+        thread.start()
+        if self.current_project_id == project_id:
+            self._render_conversation(self.store.get_project(project_id))
 
     def _export_current_version(self):
         if not self.current_project_id or not self.current_version_id:

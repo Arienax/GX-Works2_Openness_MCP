@@ -62,11 +62,15 @@ def test_normal_plc_validation_errors_remain_auto_repairable():
     assert should_auto_repair_validation_error(error) is True
 
 
-def test_compiler_checks_repair_policy_before_remote_repair_branch():
+
+def test_compiler_keeps_contract_mismatch_candidate_before_repair_choice():
     source = Path("src/main.py").read_text(encoding="utf-8")
-    catch = source.index("except Exception as first_err:")
-    remote = source.index('"stage": "repairing_remote"', catch)
-    policy = source.index("should_auto_repair_validation_error(first_err)", catch)
-    assert policy < remote
-    block = source[catch:remote]
-    assert "已跳过 AI 自动修复" in block
+    compiler_start = source.index("class CompilerThread")
+    catch = source.index("except ApproachContractValidationError as contract_error:", compiler_start)
+    csv_generation = source.index("generate_gx_works2_csv", catch)
+    remote = source.index('"stage": "repairing_remote"', compiler_start)
+    assert catch < csv_generation
+    assert remote < csv_generation
+    block = source[catch:csv_generation]
+    assert "保留原始候选并先生成 CSV" in block
+    assert "should_auto_repair_validation_error(first_err)" not in block
