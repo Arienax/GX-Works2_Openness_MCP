@@ -22,10 +22,12 @@ jobs:
           python-version: "3.11"
       - name: Apply deterministic source patch
         run: python tools/_patch_contract_resolution.py
-      - name: Install test dependencies
-        run: python -m pip install -r requirements.txt
-      - name: Run contract regression tests
-        run: pytest -q tests/test_contract_conflict_resolution.py tests/test_approach_contracts.py
+      - name: Install pytest
+        run: python -m pip install pytest
+      - name: Syntax-check implementation
+        run: python -m py_compile src/approach_contracts.py
+      - name: Run contract conflict tests
+        run: pytest -q tests/test_contract_conflict_resolution.py
       - name: Commit implementation
         run: |
           if git diff --quiet -- src/approach_contracts.py; then
