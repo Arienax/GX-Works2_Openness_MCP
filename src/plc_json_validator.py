@@ -261,6 +261,27 @@ class PLCJsonValidationError(ValueError):
     pass
 
 
+class ApproachContractValidationError(PLCJsonValidationError):
+    """A generated candidate violates the user-confirmed implementation contract."""
+
+    repair_policy = "manual"
+
+    def __init__(self, path, approach_name, issues):
+        self.path = str(path)
+        self.approach_name = str(approach_name or "已选方案").strip() or "已选方案"
+        self.issues = tuple(str(item) for item in (issues or []) if str(item).strip())
+        detail = "；".join(self.issues) or "方案约束未满足"
+        super().__init__(
+            f"{self.path}: 生成结果不符合用户选择的“{self.approach_name}”：{detail}"
+        )
+
+
+def should_auto_repair_validation_error(error):
+    """Whether CompilerThread may enter the generic remote AI repair path."""
+
+    return not isinstance(error, ApproachContractValidationError)
+
+
 def _fail(path, message):
     raise PLCJsonValidationError(f"{path}: {message}")
 
@@ -1485,10 +1506,10 @@ def validate_ladder_full(
                 (selected_approach or {}).get("name")
                 or "已选方案"
             ).strip()
-            _fail(
+            raise ApproachContractValidationError(
                 "$.confirmed_spec.selected_approach",
-                f"生成结果不符合用户选择的“{approach_name}”："
-                + "；".join(approach_issues),
+                approach_name,
+                approach_issues,
             )
     return data
 

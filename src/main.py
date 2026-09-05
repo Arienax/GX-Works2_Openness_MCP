@@ -97,6 +97,7 @@ from display_names import (
 )
 from plc_json_validator import (
     PLCJsonValidationError,
+    should_auto_repair_validation_error,
     validate_ladder_full,
     validate_ladder_partial,
     validate_st_json,
@@ -2028,6 +2029,25 @@ class CompilerThread(QThread):
             try:
                 parsed_json = parse_and_validate(json_str)
             except Exception as first_err:
+                if not should_auto_repair_validation_error(first_err):
+                    validation_messages.append(str(first_err))
+                    self.progress_updated.emit(
+                        self.task_id,
+                        {
+                            "stage": "contract_mismatch",
+                            "severity": "error",
+                            "message": (
+                                "生成结果未满足已确认方案约束；"
+                                "不会启动 AI 自动修复，请明确重新生成或手动修复。"
+                            ),
+                        },
+                    )
+                    self.failure.emit(
+                        self.task_id,
+                        "生成结果未满足已确认方案约束，已跳过 AI 自动修复: "
+                        f"{first_err}",
+                    )
+                    return
                 if self.target_mode != "ladder":
                     self.failure.emit(
                         self.task_id, f"模型输出 JSON 校验失败: {first_err}"
