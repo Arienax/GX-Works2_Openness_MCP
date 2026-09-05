@@ -5,12 +5,14 @@
     "software": "GX Works2",
     "plc_family": "FX3U",
     "source": "controlled reverse-engineering samples",
-    "date": "2026-09-05"
+    "date": "2026-09-05",
+    "sample_range": "00-47"
   },
   "warnings": [
     "Do not treat numeric stream IDs as stable. Resolve logical names from project metadata.",
     "Observed Program.pou offsets are sample-layout observations, not proven universal format invariants.",
-    "This registry is intended for a read-only parser first. Direct GXW writing requires more reverse engineering."
+    "This registry is intended for a read-only parser first. Direct GXW writing requires more reverse engineering.",
+    "Ordinary Ladder topology findings are verified only for the tested GX Works2 FX3U samples; graphical/layout data may exist elsewhere."
   ],
   "container": {
     "outer_format": "CFB/OLE",
@@ -33,7 +35,8 @@
     ],
     "observed_length_field_relation": "token_stream_length + 20",
     "observed_trailer_zero_bytes": 24,
-    "token_framing": "leading and trailing token-length byte match"
+    "token_framing": "leading and trailing token-length byte match",
+    "ordinary_ladder_representation": "mnemonic/stack instruction sequence in tested samples"
   },
   "operand_types": {
     "M": {
@@ -52,6 +55,14 @@
     "D": {
       "type_hex": "0xA8",
       "semantic": "data_register"
+    },
+    "T": {
+      "type_hex": "0xC2",
+      "semantic": "timer_device"
+    },
+    "C": {
+      "type_hex": "0xC5",
+      "semantic": "counter_device"
     },
     "K16": {
       "type_hex": "0xE8",
@@ -72,11 +83,16 @@
     "X10": "04 9C 08 04",
     "X100": "04 9C 40 04",
     "M1": "04 90 01 04",
+    "M2": "04 90 02 04",
     "Y1": "04 9D 01 04",
     "D1": "04 A8 01 04",
     "D10": "04 A8 0A 04",
     "D255": "04 A8 FF 04",
     "D256": "05 A8 00 01 05",
+    "T0": "04 C2 00 04",
+    "T1": "04 C2 01 04",
+    "C0": "04 C5 00 04",
+    "C1": "04 C5 01 04",
     "K10": "04 E8 0A 04",
     "K11": "04 E8 0B 04",
     "K255": "04 E8 FF 04",
@@ -92,6 +108,34 @@
     "LD": {
       "opcode_hex": "0x00",
       "token": "03 00 03"
+    },
+    "LDI": {
+      "opcode_hex": "0x01",
+      "token": "03 01 03"
+    },
+    "OR": {
+      "opcode_hex": "0x06",
+      "token": "03 06 03"
+    },
+    "ORI": {
+      "opcode_hex": "0x07",
+      "token": "03 07 03"
+    },
+    "AND": {
+      "opcode_hex": "0x0C",
+      "token": "03 0C 03"
+    },
+    "ANDI": {
+      "opcode_hex": "0x0D",
+      "token": "03 0D 03"
+    },
+    "ORB": {
+      "opcode_hex": "0x18",
+      "token": "03 18 03"
+    },
+    "ANB": {
+      "opcode_hex": "0x19",
+      "token": "03 19 03"
     },
     "OUT": {
       "opcode_hex": "0x20",
@@ -109,6 +153,87 @@
       "opcode_hex": "0x34",
       "token": "03 34 03"
     }
+  },
+  "basic_instruction_relations": {
+    "tested_normally_closed_rule": "LDI=LD+1, ORI=OR+1, ANDI=AND+1"
+  },
+  "timer_counter_output": {
+    "token": "04 21 03 04",
+    "status": "verified_form_semantics_partial",
+    "observed_examples": [
+      "T0 K10",
+      "C0 K10",
+      "T1 K10",
+      "C1 K10"
+    ],
+    "unknown_fields": [
+      "meaning of payload byte 0x03"
+    ]
+  },
+  "ladder_topology": {
+    "status": "verified_for_tested_ordinary_ladder_samples",
+    "simple_series": {
+      "sample": "37_SERIES_X1_M1_Y1.gxw",
+      "mnemonics": [
+        "LD X1",
+        "AND M1",
+        "OUT Y1",
+        "END"
+      ]
+    },
+    "simple_parallel": {
+      "sample": "38_PARALLEL_X1_X2_Y1.gxw",
+      "mnemonics": [
+        "LD X1",
+        "OR X2",
+        "OUT Y1",
+        "END"
+      ],
+      "explicit_branch_graph_tokens_observed": false
+    },
+    "normally_closed": {
+      "samples": [
+        "39_NC_X1_Y1.gxw",
+        "40_SERIES_X1_NC_M1_Y1.gxw"
+      ],
+      "verified": [
+        "LDI",
+        "ANDI"
+      ]
+    },
+    "ori": {
+      "sample": "43_ORI_X1_NC_X2_Y1.gxw",
+      "mnemonics": [
+        "LD X1",
+        "ORI X2",
+        "OUT Y1",
+        "END"
+      ]
+    },
+    "orb": {
+      "sample": "44_BRANCH_ORB.gxw",
+      "mnemonics": [
+        "LD X1",
+        "AND M1",
+        "LD X2",
+        "AND M2",
+        "ORB",
+        "OUT Y1",
+        "END"
+      ]
+    },
+    "anb": {
+      "sample": "45_BRANCH_ANB.gxw",
+      "mnemonics": [
+        "LD X1",
+        "LD M1",
+        "OR M2",
+        "ANB",
+        "OUT Y1",
+        "END"
+      ]
+    },
+    "conclusion": "Program.pou behaves like Mitsubishi mnemonic/stack bytecode for tested ordinary Ladder networks; topology can be reconstructed from logical instructions."
   },
   "application_header": {
     "shape": "05 FAMILY WIDTH_DESCRIPTOR SUBTYPE 05",
@@ -159,11 +284,11 @@
     "MAIN.res": "observed to contain a byte-identical copy of the Program.pou instruction token stream in controlled samples"
   },
   "next_samples": [
-    "37_SERIES_X1_M1_Y1.gxw",
-    "38_PARALLEL_X1_X2_Y1.gxw",
-    "39_NC_X1_Y1.gxw",
-    "40_SERIES_X1_NC_M1_Y1.gxw",
-    "41_TIMER_T0_K10.gxw",
-    "42_COUNTER_C0_K10.gxw"
-  ]
+    "48_STRUCT_X1_Y1.gxw",
+    "49_STRUCT_NC_X1_Y1.gxw",
+    "50_STRUCT_SERIES.gxw",
+    "51_STRUCT_PARALLEL.gxw",
+    "52_STRUCT_MOV.gxw"
+  ],
+  "next_research_focus": "Structured Project / Structured Ladder-FBD serialization compared against ordinary Ladder baseline"
 }
