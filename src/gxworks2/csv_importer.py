@@ -5,6 +5,12 @@ reverse side of :func:`draw.generate_gx_works2_csv`: it converts the current
 MAIN program and global device comments exported by GX Works2 back into the
 application ladder model.  The importer deliberately fails closed when a
 statement-list shape cannot be represented without changing its logic.
+
+Instruction *recognition* is deliberately separate from CSV decoding.  The
+raw mnemonic/operand stream is preserved first, then the shared instruction
+registry is consulted for semantic categories.  This lets valid Mitsubishi
+vendor instructions survive import even when the local catalogue does not yet
+have enough metadata to validate their semantics.
 """
 
 from __future__ import annotations
@@ -17,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
+from instruction_registry import DEFAULT_INSTRUCTION_REGISTRY, InstructionCategory
+
 from .csv_manager import CSVManager
 
 
@@ -26,7 +34,12 @@ _AND_INPUT_RE = re.compile(r"^(?:AND|ANI|ANDP|ANDF|AND=|AND<>|AND>=|AND<=|AND>|A
 _OR_INPUT_RE = re.compile(r"^OR(?:I|P|F|=|<>|>=|<=|>|<)?$", re.I)
 _COMPARE_SUFFIXES = ("<>", ">=", "<=", "=", ">", "<")
 _CONDITION_SYSTEM_OPS = {"ANB", "ORB"}
-_BRANCH_SYSTEM_OPS = {"MPS", "MRD", "MPP"}
+_BRANCH_SYSTEM_OPS = {
+    mnemonic
+    for mnemonic in DEFAULT_INSTRUCTION_REGISTRY.known_mnemonics()
+    if DEFAULT_INSTRUCTION_REGISTRY.category_of(mnemonic)
+    == InstructionCategory.BRANCH_CONTROL
+} or {"MPS", "MRD", "MPP"}
 
 
 class GXCSVImportError(ValueError):
@@ -34,7 +47,13 @@ class GXCSVImportError(ValueError):
 
 
 @dataclass
-class _Instruction:
+class RawInstruction:
+    """Lossless GX statement-list instruction before semantic decoding.
+
+    Unknown mnemonics are valid here.  This layer only represents what GX
+    Works2 exported; catalogue coverage is a separate concern.
+    """
+
     step: str
     op: str
     args: List[str] = field(default_factory=list)
@@ -43,7 +62,13 @@ class _Instruction:
     source_row: int = 0
 
     def as_ir(self) -> Dict[str, Any]:
+        # Keep the existing external instruction-group shape unchanged.
         return {"op": self.op, "args": list(self.args)}
+
+
+# Internal compatibility alias so this first-stage refactor does not force a
+# flag-day rename through the importer implementation or downstream tests.
+_Instruction = RawInstruction
 
 
 @dataclass(frozen=True)
@@ -151,6 +176,9 @@ def _is_root_input(op: str) -> bool:
 
 def _is_condition(op: str) -> bool:
     normalized = str(op or "").upper()
+    category = DEFAULT_INSTRUCTION_REGISTRY.category_of(normalized)
+    if category == InstructionCategory.CONDITION:
+        return True
     return bool(
         _ROOT_INPUT_RE.fullmatch(normalized)
         or _AND_INPUT_RE.fullmatch(normalized)
@@ -377,6 +405,9 @@ def _output_element(record: _Instruction, comments: Mapping[str, str]) -> Dict[s
             "address": address,
             "label": label or _comment_for(address, comments),
         }
+    # The historical external JSON format is intentionally retained.  A
+    # missing catalogue entry is not an import error: APP_INSTR is the stable
+    # lossless vendor-extension envelope used for round-trip preservation.
     return {
         "type": "APP_INSTR",
         "opcode": op,
@@ -692,6 +723,7 @@ def materialize_gxworks2_version(
 __all__ = [
     "GXCSVImportError",
     "ParsedGXProgram",
+    "RawInstruction",
     "diff_gxworks2_programs",
     "materialize_gxworks2_version",
     "parse_gxworks2_csv",
