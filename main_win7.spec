@@ -36,6 +36,9 @@ a = Analysis(
         ('resources/knowledge/fx3u_knowledge.sqlite', 'knowledge'),
         ('resources/knowledge/fx3u_dense_lsa.npz', 'knowledge'),
         ('resources/knowledge/manifest.json', 'knowledge'),
+        # workbench_widgets is now a package facade; the historical module is
+        # loaded as the editor engine at runtime and therefore must remain as data.
+        ('src/workbench_widgets.py', '.'),
     ] + sdk_datas,
     hiddenimports=[
         'openai',
