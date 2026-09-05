@@ -1,0 +1,153 @@
+name: Apply contract candidate-first flow
+
+on:
+  push:
+    paths:
+      - ".github/workflows/_contract-candidate-first.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Apply source patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/main.py")
+          text = path.read_text(encoding="utf-8")
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 match, found {count}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '''from plc_json_validator import (\n    PLCJsonValidationError,\n    should_auto_repair_validation_error,\n    validate_ladder_full,\n    validate_ladder_partial,\n    validate_st_json,\n)\n''',
+              '''from plc_json_validator import (\n    ApproachContractValidationError,\n    PLCJsonValidationError,\n    validate_ladder_full,\n    validate_ladder_partial,\n    validate_st_json,\n)\n''',
+              "validator imports",
+          )
+
+          replace_once(
+              '''            validation_messages = []\n            semantic_requirements = []\n''',
+              '''            validation_messages = []\n            contract_mismatch = None\n            semantic_requirements = []\n''',
+              "contract mismatch state",
+          )
+
+          replace_once(
+              '''            def parse_and_validate(candidate):\n                parsed = parse_candidate(candidate)\n''',
+              '''            def parse_and_validate(candidate):\n                nonlocal contract_mismatch\n                contract_mismatch = None\n                parsed = parse_candidate(candidate)\n''',
+              "parse contract state reset",
+          )
+
+          replace_once(
+              '''                    emit_parsing_progress("正在解析模型输出：执行 PLC 硬校验")\n                    validate_ladder_full(\n                        parsed,\n                        plc_model=self.plc_model,\n                        confirmed_spec=self.confirmed_context,\n                    )\n                    if semantic_requirements:\n''',
+              '''                    emit_parsing_progress("正在解析模型输出：执行 PLC 硬校验")\n                    try:\n                        validate_ladder_full(\n                            parsed,\n                            plc_model=self.plc_model,\n                            confirmed_spec=self.confirmed_context,\n                        )\n                    except ApproachContractValidationError as contract_error:\n                        contract_mismatch = {\n                            "message": str(contract_error),\n                            "approach_name": contract_error.approach_name,\n                            "issues": list(contract_error.issues),\n                            "repairable": True,\n                        }\n                        validation_messages.append(str(contract_error))\n                        self.progress_updated.emit(\n                            self.task_id,\n                            {\n                                "stage": "contract_mismatch",\n                                "severity": "warning",\n                                "message": (\n                                    "方案约束未满足；保留原始候选并先生成 CSV，"\n                                    "不会自动修复，等待用户决定。"\n                                ),\n                            },\n                        )\n                    if semantic_requirements:\n''',
+              "catch contract mismatch before artifact generation",
+          )
+
+          replace_once(
+              '''            except Exception as first_err:\n                if not should_auto_repair_validation_error(first_err):\n                    validation_messages.append(str(first_err))\n                    self.progress_updated.emit(\n                        self.task_id,\n                        {\n                            "stage": "contract_mismatch",\n                            "severity": "error",\n                            "message": (\n                                "生成结果未满足已确认方案约束；"\n                                "不会启动 AI 自动修复，请明确重新生成或手动修复。"\n                            ),\n                        },\n                    )\n                    self.failure.emit(\n                        self.task_id,\n                        "生成结果未满足已确认方案约束，已跳过 AI 自动修复: "\n                        f"{first_err}",\n                    )\n                    return\n                if self.target_mode != "ladder":\n''',
+              '''            except Exception as first_err:\n                if self.target_mode != "ladder":\n''',
+              "remove contract mismatch failure route",
+          )
+
+          replace_once(
+              '''                        "artifacts": artifacts,\n                        "validation": {\n                            "status": "passed",\n                            "messages": validation_messages\n                            or ["结构、指令参数和双线圈校验已通过"],\n                        },\n''',
+              '''                        "artifacts": artifacts,\n                        "contract_mismatch": (\n                            copy.deepcopy(contract_mismatch)\n                            if contract_mismatch\n                            else None\n                        ),\n                        "validation": {\n                            "status": (\n                                "contract_mismatch"\n                                if contract_mismatch\n                                else "passed"\n                            ),\n                            "messages": validation_messages\n                            or ["结构、指令参数和双线圈校验已通过"],\n                        },\n''',
+              "persist contract mismatch result",
+          )
+
+          replace_once(
+              '''        self.compile_btn.setEnabled(True)\n        self.compile_btn.setText("分析并生成")\n        self.thinking_panel.set_status("已完成")\n        self.result_status.setText("生成完成 · 校验通过")\n        self._last_result = dict(result or {})\n        self._last_target_mode = self._last_result.get("target_mode")\n''',
+              '''        self.compile_btn.setEnabled(True)\n        self.compile_btn.setText("分析并生成")\n        self._last_result = dict(result or {})\n        contract_mismatch = self._last_result.get("contract_mismatch")\n        if contract_mismatch:\n            self.thinking_panel.set_status("方案约束待处理")\n            self.result_status.setText("CSV 已生成 · 方案约束待处理")\n        else:\n            self.thinking_panel.set_status("已完成")\n            self.result_status.setText("生成完成 · 校验通过")\n        self._last_target_mode = self._last_result.get("target_mode")\n''',
+              "legacy result status",
+          )
+
+          replace_once(
+              '''                QMessageBox.information(\n                    self,\n                    "成功",\n                    f"{gx_tool}生成成功，结构和型号硬校验已通过！",\n                )\n''',
+              '''                if contract_mismatch:\n                    issues = contract_mismatch.get("issues") or [\n                        contract_mismatch.get("message", "方案约束未满足")\n                    ]\n                    issue_text = "；".join(str(item) for item in issues if item)\n                    program_csv_path = self._active_output_dir / artifacts.get(\n                        "program_csv", "program.csv"\n                    )\n                    answer = QMessageBox.question(\n                        self,\n                        "CSV 已生成，方案约束待处理",\n                        (\n                            "原始程序已经生成，CSV 不会因为方案约束问题被丢弃。\\n"\n                            f"CSV：{program_csv_path}\\n\\n"\n                            "你可以先切换到 GX Works2 导入并检查这个版本。\\n\\n"\n                            f"未满足的方案约束：{issue_text}\\n\\n"\n                            "是否让 AI 基于当前结果进行修复？"\n                        ),\n                        QMessageBox.StandardButton.Yes\n                        | QMessageBox.StandardButton.No,\n                        QMessageBox.StandardButton.No,\n                    )\n                    if (\n                        answer == QMessageBox.StandardButton.Yes\n                        and self._last_ladder_json is not None\n                        and self._last_confirmed_spec is not None\n                    ):\n                        repair_request = (\n                            "基于当前已生成梯形图，仅修复以下已确认方案约束问题："\n                            f"{issue_text}。保持其余逻辑、I/O、参数和已选方案不变；"\n                            "不得重新分析需求或更换实现方案。"\n                        )\n                        previous = copy.deepcopy(self._last_ladder_json)\n                        confirmed = copy.deepcopy(self._last_confirmed_spec)\n                        QTimer.singleShot(\n                            0,\n                            lambda req=repair_request, prev=previous, spec=confirmed: (\n                                self._launch_compiler(\n                                    req, "high", "ladder", prev, spec\n                                )\n                            ),\n                        )\n                else:\n                    QMessageBox.information(\n                        self,\n                        "成功",\n                        f"{gx_tool}生成成功，结构和型号硬校验已通过！",\n                    )\n''',
+              "legacy user repair choice",
+          )
+
+          replace_once(
+              '''        self.export_button.setEnabled(False)\n        self.export_button.clicked.connect(self._export_current_version)\n        self.gxworks2_sync_status = QLabel("GX：未检查")\n''',
+              '''        self.export_button.setEnabled(False)\n        self.export_button.clicked.connect(self._export_current_version)\n        self.contract_repair_button = QPushButton("修复方案约束")\n        self.contract_repair_button.setObjectName("PrimaryButton")\n        self.contract_repair_button.setEnabled(False)\n        self.contract_repair_button.setVisible(False)\n        self.contract_repair_button.clicked.connect(\n            self._repair_current_contract_mismatch\n        )\n        self.gxworks2_sync_status = QLabel("GX：未检查")\n''',
+              "workbench repair button",
+          )
+
+          replace_once(
+              '''        actions.addWidget(self.export_button)\n        actions.addWidget(self.gxworks2_sync_status)\n''',
+              '''        actions.addWidget(self.export_button)\n        actions.addWidget(self.contract_repair_button)\n        actions.addWidget(self.gxworks2_sync_status)\n''',
+              "workbench repair action placement",
+          )
+
+          replace_once(
+              '''        self.export_button.setEnabled(True)\n        self.gxworks2_import_button.setEnabled(mode == "ladder")\n''',
+              '''        self.export_button.setEnabled(True)\n        has_contract_mismatch = bool(version.get("contract_mismatch"))\n        self.contract_repair_button.setVisible(\n            mode == "ladder" and has_contract_mismatch\n        )\n        self.contract_repair_button.setEnabled(\n            mode == "ladder"\n            and has_contract_mismatch\n            and self.active_task is None\n        )\n        self.gxworks2_import_button.setEnabled(mode == "ladder")\n''',
+              "load version repair action state",
+          )
+
+          replace_once(
+              '''        self.export_button.setEnabled(False)\n        self.gxworks2_import_button.setEnabled(False)\n        self._set_gx_sync_status("unknown")\n''',
+              '''        self.export_button.setEnabled(False)\n        self.contract_repair_button.setEnabled(False)\n        self.contract_repair_button.setVisible(False)\n        self.gxworks2_import_button.setEnabled(False)\n        self._set_gx_sync_status("unknown")\n''',
+              "clear repair action",
+          )
+
+          replace_once(
+              '''    def _export_current_version(self):\n''',
+              '''    def _repair_current_contract_mismatch(self):\n        if self.active_task:\n            self.statusBar().showMessage("当前已有任务运行。", 3000)\n            return\n        if not self.current_project_id or not self.current_version_id:\n            return\n        project_id = self.current_project_id\n        version_id = self.current_version_id\n        project = self.store.get_project(project_id)\n        version = self.store.get_version(project_id, version_id)\n        if not project or not version:\n            return\n        mismatch = version.get("contract_mismatch") or {}\n        if not mismatch:\n            self.statusBar().showMessage("当前版本没有待修复的方案约束。", 4000)\n            return\n        selected = self._version_with_json(project, version_id)\n        if not selected or not isinstance(selected[1], dict):\n            self.statusBar().showMessage("当前版本没有可修复的梯形图 JSON。", 4000)\n            return\n        _version, previous_json = selected\n        confirmed_spec = self._version_confirmed_spec(version)\n        if not confirmed_spec:\n            QMessageBox.warning(\n                self,\n                "无法修复",\n                "当前版本缺少已确认规格快照，不能自动修改实现方案。",\n            )\n            return\n        issues = mismatch.get("issues") or [\n            mismatch.get("message", "方案约束未满足")\n        ]\n        issue_text = "；".join(str(item) for item in issues if item)\n        csv_name = (version.get("artifacts") or {}).get(\n            "program_csv", "program.csv"\n        )\n        answer = QMessageBox.question(\n            self,\n            "确认修复方案约束",\n            (\n                f"基础版本：{version_display_name(version_id)}\\n"\n                f"原始 CSV 已保留：{csv_name}\\n\\n"\n                "你可以先导出或同步这个 CSV 到 GX Works2 检查。\\n\\n"\n                f"待修复：{issue_text}\\n\\n"\n                "确认后会基于当前版本创建一个新的修复版本，不覆盖原始 CSV。"\n            ),\n            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,\n            QMessageBox.StandardButton.No,\n        )\n        if answer != QMessageBox.StandardButton.Yes:\n            return\n        if not self._ensure_api_configured():\n            self.statusBar().showMessage("修复需要先完成 API 配置。", 4000)\n            return\n\n        new_version_id, output_dir = self.store.prepare_version(project_id)\n        plc_model = (\n            version.get("plc_model")\n            or project.get("plc_model")\n            or "FX3U"\n        )\n        request = (\n            f"目标 PLC 型号：{plc_model}\\n"\n            "基于当前版本，仅修复以下已确认 generation_contract 方案约束问题："\n            f"{issue_text}。保持其余逻辑、I/O、参数、地址和已选方案不变；"\n            "不得重新分析需求，不得用功能等价方案替换用户指定的必用指令或结构。"\n        )\n        task_id = f"{project_id}:{new_version_id}"\n        self.active_task = {\n            "id": task_id,\n            "project_id": project_id,\n            "version_id": new_version_id,\n            "phase": "compile",\n            "summary": f"方案约束修复：{issue_text[:80]}",\n            "parent_version_id": version_id,\n            "confirmed_spec_snapshot": copy.deepcopy(confirmed_spec),\n            "confirmed_spec_hash": self._json_sha256(confirmed_spec),\n            "plc_model": plc_model,\n        }\n        self.store.add_message(\n            project_id,\n            "assistant",\n            (\n                f"已确认基于{version_display_name(version_id)}修复方案约束；"\n                "原始版本和 CSV 保持不变。"\n            ),\n            kind="system",\n        )\n        self._set_busy(True, "正在修复方案约束")\n        self.activity_panel.reset()\n        self.activity_panel.set_status("正在基于原始 CSV 对应版本生成修复版本")\n        thread = CompilerThread(\n            task_id,\n            request,\n            None,\n            "ladder",\n            output_dir,\n            previous_json=previous_json,\n            previous_ir=self.store.load_program_ir(project_id, version_id),\n            conversation_history=[],\n            confirmed_context=confirmed_spec,\n            task_type="edit",\n            current_version_json=previous_json,\n            plc_model=plc_model,\n            program_name="MAIN",\n            revision=int(str(new_version_id).lstrip("vV") or "1"),\n            requirement_text=request,\n        )\n        self._retain_worker_thread("_compiler_thread", thread)\n        thread.thinking_updated.connect(self._append_reasoning)\n        thread.content_updated.connect(self._append_content)\n        thread.progress_updated.connect(self._progress_updated)\n        thread.success.connect(self._compile_success)\n        thread.failure.connect(self._compile_failure)\n        thread.start()\n        if self.current_project_id == project_id:\n            self._render_conversation(self.store.get_project(project_id))\n\n    def _export_current_version(self):\n''',
+              "workbench explicit contract repair",
+          )
+
+          replace_once(
+              '''        result = dict(result)\n        basic_report = result.pop("inspection_report", None)\n''',
+              '''        result = dict(result)\n        contract_mismatch = result.get("contract_mismatch")\n        basic_report = result.pop("inspection_report", None)\n''',
+              "compile success mismatch state",
+          )
+
+          replace_once(
+              '''        self.store.add_message(\n            task["project_id"],\n            "assistant",\n            f"程序已生成并通过校验。版本：{task['version_id']}",\n            kind="generation",\n            metadata={"version_id": task["version_id"]},\n        )\n''',
+              '''        self.store.add_message(\n            task["project_id"],\n            "assistant",\n            (\n                f"程序和 CSV 已生成。版本：{task['version_id']}。"\n                "方案约束尚未满足；可以先导出/同步到 GX Works2 检查，"\n                "再点击“修复方案约束”决定是否修复。"\n                if contract_mismatch\n                else f"程序已生成并通过校验。版本：{task['version_id']}"\n            ),\n            kind="generation",\n            metadata={"version_id": task["version_id"]},\n        )\n''',
+              "generation message for candidate-first flow",
+          )
+
+          replace_once(
+              '''        self.active_task = None\n        self._set_busy(False, "生成完成")\n        self.activity_panel.set_status("生成完成")\n        self.statusBar().showMessage(\n            f"{version_display_name(version_id)}已生成并保存", 5000\n        )\n''',
+              '''        self.active_task = None\n        completion_status = (\n            "CSV 已生成 · 方案约束待处理"\n            if contract_mismatch\n            else "生成完成"\n        )\n        self._set_busy(False, completion_status)\n        self.activity_panel.set_status(completion_status)\n        self.statusBar().showMessage(\n            (\n                f"{version_display_name(version_id)}原始 CSV 已保存；"\n                "可先导入 GX Works2，再决定是否修复"\n                if contract_mismatch\n                else f"{version_display_name(version_id)}已生成并保存"\n            ),\n            7000 if contract_mismatch else 5000,\n        )\n''',
+              "candidate-first completion status",
+          )
+
+          path.write_text(text, encoding="utf-8")
+
+          test = Path("tests/test_contract_candidate_first.py")
+          test.write_text(
+              '''from pathlib import Path\n\n\ndef test_contract_mismatch_is_materialized_before_user_repair_choice():\n    source = Path("src/main.py").read_text(encoding="utf-8")\n    assert "except ApproachContractValidationError as contract_error:" in source\n    assert '"contract_mismatch": (' in source\n    assert '"status": (\\n                                "contract_mismatch"' in source\n    assert "保留原始候选并先生成 CSV" in source\n    assert "self.contract_repair_button = QPushButton(\"修复方案约束\")" in source\n    assert "def _repair_current_contract_mismatch(self):" in source\n    assert "原始版本和 CSV 保持不变" in source\n\n\ndef test_contract_mismatch_no_longer_enters_pre_csv_failure_route():\n    source = Path("src/main.py").read_text(encoding="utf-8")\n    compiler_start = source.index("class CompilerThread")\n    artifact_generation = source.index("generate_gx_works2_csv", compiler_start)\n    compiler_prefix = source[compiler_start:artifact_generation]\n    assert "should_auto_repair_validation_error(first_err)" not in compiler_prefix\n    assert "已跳过 AI 自动修复" not in compiler_prefix\n''',
+              encoding="utf-8",
+          )
+          PY
+      - name: Syntax check
+        run: python -m py_compile src/main.py src/plc_json_validator.py tests/test_contract_candidate_first.py
+      - name: Install pytest
+        run: python -m pip install pytest
+      - name: Run focused tests
+        run: pytest -q tests/test_contract_candidate_first.py tests/test_contract_implementation.py tests/test_contract_conflict_resolution.py tests/test_instruction_registry.py
+      - name: Commit implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/main.py tests/test_contract_candidate_first.py
+          git commit -m "fix: keep contract-mismatch CSV before repair choice"
+          git push origin HEAD:main
