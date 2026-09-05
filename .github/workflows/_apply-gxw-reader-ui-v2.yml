@@ -1,0 +1,71 @@
+name: Apply GXW reader UI v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/_apply-gxw-reader-ui-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install focused test dependency
+        run: python -m pip install pytest
+
+      - name: Apply UI patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/main.py')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''        self.gxworks2_advanced_button.clicked.connect(\n            self._sync_current_version_with_gxworks2\n        )\n        self.simulator_test_button = QPushButton("仿真测试")\n'''
+          new = '''        self.gxworks2_advanced_button.clicked.connect(\n            self._sync_current_version_with_gxworks2\n        )\n        self.gxw_reader_button = QPushButton("解析 GXW")\n        self.gxw_reader_button.setToolTip(\n            "实验性只读解析GX Works2 Structured Ladder/FBD工程；不会修改原GXW文件"\n        )\n        self.gxw_reader_button.clicked.connect(self._open_gxw_structured_reader)\n        self.simulator_test_button = QPushButton("仿真测试")\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'button creation anchor count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''        actions.addWidget(self.gxworks2_advanced_button)\n        actions.addWidget(self.simulator_test_button)\n'''
+          new = '''        actions.addWidget(self.gxworks2_advanced_button)\n        actions.addWidget(self.gxw_reader_button)\n        actions.addWidget(self.simulator_test_button)\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'action row anchor count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          marker = '''    def _set_gx_sync_status(self, status, detail=""):\n'''
+          method = '''    def _open_gxw_structured_reader(self):\n        source, _ = QFileDialog.getOpenFileName(\n            self,\n            "选择 GX Works2 Structured Ladder/FBD 工程",\n            "",\n            "GX Works2 Project (*.gxw);;All Files (*.*)",\n            options=QFileDialog.Option.DontUseNativeDialog,\n        )\n        if not source:\n            return\n\n        try:\n            from gxw.decoder import describe_program\n            from gxw.models import GXWFormatError\n            from gxw.project_resolver import GXWProjectResolver\n            from gxw.structured_pou import parse_structured_pou\n\n            resolver = GXWProjectResolver.from_file(source)\n            candidates = resolver.program_pou_names()\n            if not candidates:\n                raise GXWFormatError("工程中没有找到 *.Program.pou。")\n\n            selected = candidates[0]\n            if len(candidates) > 1:\n                selected, accepted = QInputDialog.getItem(\n                    self,\n                    "选择程序体",\n                    "检测到多个 Program.pou，请选择要解析的程序体：",\n                    candidates,\n                    0,\n                    False,\n                )\n                if not accepted or not selected:\n                    return\n\n            program = parse_structured_pou(\n                resolver.read_logical_file(selected),\n                logical_name=selected,\n                source_path=Path(source),\n            )\n            report_lines = describe_program(program)\n        except Exception as exc:\n            QMessageBox.critical(\n                self,\n                "GXW 解析失败",\n                "当前入口只针对已验证的 Structured Ladder/FBD GXW 结构。\\n\\n"\n                + naturalize_display_text(str(exc)),\n            )\n            return\n\n        dialog = QDialog(self)\n        dialog.setWindowTitle("GXW 结构化梯形图解析（只读）")\n        dialog.resize(900, 640)\n        layout = QVBoxLayout(dialog)\n        layout.setContentsMargins(18, 18, 18, 18)\n        layout.setSpacing(10)\n\n        title = QLabel(\n            f"{Path(source).name}  ·  {selected}  ·  "\n            f"{len(program.nodes)} 节点  ·  {len(program.wires)} 连线"\n        )\n        title.setObjectName("CanvasTitle")\n        layout.addWidget(title)\n\n        note = QLabel(\n            "实验性只读解析：不会修改GXW文件。未知结构会保留或报错，不会猜测。"\n        )\n        note.setWordWrap(True)\n        note.setObjectName("HelperText")\n        layout.addWidget(note)\n\n        output = QPlainTextEdit(dialog)\n        output.setReadOnly(True)\n        output.setPlainText("\\n".join(report_lines))\n        layout.addWidget(output, 1)\n\n        footer = QHBoxLayout()\n        footer.addStretch(1)\n        close_button = QPushButton("关闭")\n        close_button.clicked.connect(dialog.accept)\n        footer.addWidget(close_button)\n        layout.addLayout(footer)\n\n        dialog.exec()\n        self.statusBar().showMessage(\n            f"已只读解析 {Path(source).name}：{len(program.nodes)} 个节点，"\n            f"{len(program.wires)} 条连线",\n            6000,\n        )\n\n'''
+          if text.count(marker) != 1:
+              raise SystemExit(f'method insertion anchor count={text.count(marker)}')
+          text = text.replace(marker, method + marker, 1)
+          path.write_text(text, encoding='utf-8')
+
+          Path('tests/test_gxw_reader_ui.py').write_text('''from pathlib import Path\n\n\ndef test_gxw_reader_ui_entry_is_wired():\n    text = Path("src/main.py").read_text(encoding="utf-8")\n    assert 'QPushButton("解析 GXW")' in text\n    assert 'self.gxw_reader_button.clicked.connect(self._open_gxw_structured_reader)' in text\n    assert 'def _open_gxw_structured_reader(self):' in text\n    assert 'QFileDialog.getOpenFileName(' in text\n    assert 'GXW 结构化梯形图解析（只读）' in text\n    assert 'resolver.program_pou_names()' in text\n    assert 'parse_structured_pou(' in text\n    assert 'output.setReadOnly(True)' in text\n    assert '不会修改GXW文件' in text\n\n\ndef test_gxw_reader_entry_does_not_join_gx_sync_busy_buttons():\n    text = Path("src/main.py").read_text(encoding="utf-8")\n    block = text.split("def _gx_action_buttons", 1)[1].split("    def ", 1)[0]\n    assert "gxw_reader_button" not in block\n''', encoding='utf-8')
+          PY
+
+      - name: Verify focused GXW reader tests
+        shell: bash
+        run: |
+          python -m py_compile src/main.py src/gxw/*.py
+          python -m pytest -q tests/test_gxw_structured_reader.py tests/test_gxw_reader_ui.py
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          git config user.name "Arienax"
+          git config user.email "61538298+Arienax@users.noreply.github.com"
+          git add src/main.py tests/test_gxw_reader_ui.py
+          git commit -m "feat: add GXW reader test UI"
+          git push origin main
