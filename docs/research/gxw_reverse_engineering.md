@@ -33,6 +33,7 @@ Each sample changes one variable where possible. The currently analyzed set incl
 - `08_X100_Y1.gxw`
 - `09_M1_Y1.gxw`
 - `10_MOV_K10_D1.gxw` through `36_DSUB_D0_D2_D4.gxw`
+- `37_SERIES_X1_M1_Y1.gxw` through `47_COUNTER_C1_K10.gxw`
 
 The filenames beginning with `DM0V` contain a digit zero in the filename only; the actual GX Works2 instruction is `DMOV`.
 
@@ -115,24 +116,183 @@ Observed basic instruction opcodes:
 | Instruction | Token | Evidence |
 |---|---|---|
 | `LD` | `03 00 03` | `X1` input samples |
+| `LDI` | `03 01 03` | `39_NC_X1_Y1.gxw` |
+| `OR` | `03 06 03` | `38_PARALLEL_X1_X2_Y1.gxw` |
+| `ORI` | `03 07 03` | `43_ORI_X1_NC_X2_Y1.gxw` |
+| `AND` | `03 0C 03` | `37_SERIES_X1_M1_Y1.gxw` |
+| `ANDI` | `03 0D 03` | `40_SERIES_X1_NC_M1_Y1.gxw` |
+| `ORB` | `03 18 03` | `44_BRANCH_ORB.gxw` |
+| `ANB` | `03 19 03` | `45_BRANCH_ANB.gxw` |
 | `OUT` | `03 20 03` | `Y1` output samples |
+| T/C output variant | `04 21 03 04` | timer/counter samples 41, 42, 46, 47 |
 | `SET` | `03 23 03` | `23_SET_M1.gxw` |
 | `RST` | `03 24 03` | `24_RST_M1.gxw` |
 | `END` | `03 34 03` | all completed program samples |
 
-Example:
+The following inversion relation is verified for the tested contact families:
+
+```text
+LD   0x00 -> LDI  0x01
+OR   0x06 -> ORI  0x07
+AND  0x0C -> ANDI 0x0D
+```
+
+That is, the normally-closed variant is `normal opcode + 1` for these three tested families. Do not generalize this rule to unrelated instruction classes without evidence.
+
+## Ladder topology findings (samples 37-45)
+
+The topology samples show that ordinary GX Works2 Ladder logic in `MAIN.Program.pou` is represented primarily as a logical instruction sequence rather than as explicit graph nodes/edges.
+
+### Series contact
+
+`37_SERIES_X1_M1_Y1.gxw`:
 
 ```text
 LD X1
-SET M1
+AND M1
+OUT Y1
 END
+```
 
+Token stream:
+
+```text
+03 00 03        # LD
+04 9C 01 04     # X1
+03 0C 03        # AND
+04 90 01 04     # M1
+03 20 03        # OUT
+04 9D 01 04     # Y1
+03 34 03        # END
+```
+
+### Simple parallel contact
+
+`38_PARALLEL_X1_X2_Y1.gxw`:
+
+```text
+LD X1
+OR X2
+OUT Y1
+END
+```
+
+Token stream:
+
+```text
 03 00 03
 04 9C 01 04
-03 23 03
-04 90 01 04
+03 06 03
+04 9C 02 04
+03 20 03
+04 9D 01 04
 03 34 03
 ```
+
+No separate branch-start, branch-end, merge-node, edge, or coordinate token was observed for this simple parallel network.
+
+### Normally-closed contact
+
+`39_NC_X1_Y1.gxw` verifies `LDI`:
+
+```text
+03 01 03        # LDI
+04 9C 01 04     # X1
+03 20 03        # OUT
+04 9D 01 04     # Y1
+03 34 03        # END
+```
+
+`40_SERIES_X1_NC_M1_Y1.gxw` verifies `ANDI`:
+
+```text
+03 00 03        # LD X1
+04 9C 01 04
+03 0D 03        # ANDI M1
+04 90 01 04
+03 20 03        # OUT Y1
+04 9D 01 04
+03 34 03
+```
+
+### ORI
+
+`43_ORI_X1_NC_X2_Y1.gxw` verifies `ORI = 0x07`:
+
+```text
+LD X1
+ORI X2
+OUT Y1
+END
+```
+
+```text
+03 00 03
+04 9C 01 04
+03 07 03
+04 9C 02 04
+03 20 03
+04 9D 01 04
+03 34 03
+```
+
+### ORB branch merge
+
+`44_BRANCH_ORB.gxw` represents two series branches in parallel as a stack-like instruction sequence:
+
+```text
+LD X1
+AND M1
+LD X2
+AND M2
+ORB
+OUT Y1
+END
+```
+
+```text
+03 00 03
+04 9C 01 04
+03 0C 03
+04 90 01 04
+03 00 03
+04 9C 02 04
+03 0C 03
+04 90 02 04
+03 18 03        # ORB
+03 20 03
+04 9D 01 04
+03 34 03
+```
+
+This verifies `ORB = 0x18` for the tested FX3U sample.
+
+### ANB branch merge
+
+`45_BRANCH_ANB.gxw` is represented as:
+
+```text
+LD X1
+LD M1
+OR M2
+ANB
+OUT Y1
+END
+```
+
+with:
+
+```text
+03 19 03        # ANB
+```
+
+This verifies `ANB = 0x19` for the tested FX3U sample.
+
+### Topology conclusion
+
+For the ordinary Ladder cases tested through sample 45, `MAIN.Program.pou` behaves like a Mitsubishi mnemonic/stack bytecode. Simple and compound branch topology is represented using logical instructions (`OR`, `ORB`, `ANB`, etc.) rather than explicit graph topology tokens in the observed instruction stream.
+
+This does **not** prove that GXW never stores graphical/layout information elsewhere. It only establishes that the logical program body in the tested `Program.pou` samples is reconstructible from the instruction sequence.
 
 ## Operand tokens
 
@@ -146,6 +306,8 @@ Observed type bytes:
 | `X` | `0x9C` | input |
 | `Y` | `0x9D` | output |
 | `D` | `0xA8` | data register |
+| `T` | `0xC2` | timer device |
+| `C` | `0xC5` | counter device |
 | `K` 16-bit semantic constant | `0xE8` | decimal constant |
 | `K` 32-bit semantic constant | `0xE9` | decimal constant in double-word context |
 | `H` | `0xEA` | hexadecimal constant |
@@ -166,6 +328,10 @@ M1   -> 04 90 01 04
 Y1   -> 04 9D 01 04
 D1   -> 04 A8 01 04
 D10  -> 04 A8 0A 04
+T0   -> 04 C2 00 04
+T1   -> 04 C2 01 04
+C0   -> 04 C5 00 04
+C1   -> 04 C5 01 04
 K10  -> 04 E8 0A 04
 K11  -> 04 E8 0B 04
 H10  -> 04 EA 10 04
@@ -219,6 +385,41 @@ Current interpretation:
 - negative values are serialized using two's-complement at the semantic width.
 - positive values may use a shorter magnitude payload, so the parser must preserve the operand type byte and raw bytes before semantic interpretation.
 
+## Timer and counter output form (samples 41, 42, 46, 47)
+
+The tested timer/counter coils use a distinct instruction token before the timer/counter device and preset operand:
+
+```text
+04 21 03 04
+```
+
+Examples:
+
+`41_TIMER_T0_K10.gxw`:
+
+```text
+03 00 03        # LD
+04 9C 01 04     # X1
+04 21 03 04     # T/C output form
+04 C2 00 04     # T0
+04 E8 0A 04     # K10
+03 34 03        # END
+```
+
+`42_COUNTER_C0_K10.gxw` uses the same output form with `C0` (`0xC5`) instead of `T0` (`0xC2`).
+
+Samples 46 and 47 verify device address incrementing:
+
+```text
+T0 -> 04 C2 00 04
+T1 -> 04 C2 01 04
+
+C0 -> 04 C5 00 04
+C1 -> 04 C5 01 04
+```
+
+The exact meaning of the second payload byte `0x03` in `04 21 03 04` is not yet decoded. Keep this token as a distinct verified T/C output form rather than forcing it into the ordinary `03 20 03` OUT encoding.
+
 ## Application-instruction header
 
 Observed application instructions use a five-byte header token:
@@ -264,17 +465,6 @@ subtype/opcode = FNC_number * 2 + D_modifier
 ```
 
 where `D_modifier` is `0` for the normal word form and `1` for the tested double-word form.
-
-Examples:
-
-```text
-ADD  FNC20 -> 20*2 = 0x28
-DADD       -> 0x28 + 1 = 0x29
-SUB  FNC21 -> 21*2 = 0x2A
-DSUB       -> 0x2A + 1 = 0x2B
-MUL  FNC22 -> 0x2C
-DIV  FNC23 -> 0x2E
-```
 
 Do not assume this arithmetic-family relation applies to every GX Works2 instruction family until separately verified.
 
@@ -334,7 +524,7 @@ The exact `COMMENT.qcd` record schema is not yet fully decoded.
 
 ## `MAIN.res` duplication
 
-For the controlled samples, `MAIN.res` contains a byte-identical copy of the instruction token stream found in `MAIN.Program.pou` (at a different offset).
+For the controlled samples, `MAIN.res` contains a byte-identical copy of the instruction token stream found in `MAIN.Program.pou` (at a different offset, observed at `0x3A` in the current corpus).
 
 Implication:
 
@@ -357,6 +547,7 @@ Program := Header Instruction* END Trailer
 Instruction :=
     BasicInstruction
   | ApplicationInstruction
+  | TimerCounterOutputInstruction
 
 BasicInstruction :=
     [03 opcode 03]
@@ -365,6 +556,11 @@ BasicInstruction :=
 ApplicationInstruction :=
     [05 family width_descriptor subtype 05]
     Operand*
+
+TimerCounterOutputInstruction :=
+    [04 21 03 04]
+    TimerOrCounterOperand
+    PresetOperand
 
 Operand :=
     [length type value_le... length]
@@ -385,6 +581,7 @@ A first implementation should:
 7. Decode instructions through a registry, not a large handwritten `if/elif` chain.
 8. Preserve unknown tokens instead of guessing semantics.
 9. Remain read-only until duplicated project state, hashes/checksums and writer invariants are understood.
+10. Reconstruct ordinary Ladder topology from mnemonic/stack semantics (`OR`, `ORB`, `ANB`, etc.) rather than inventing graph tokens not present in the observed `Program.pou` stream.
 
 Suggested internal form:
 
@@ -411,38 +608,35 @@ class GXWInstruction:
     raw_tokens: list[RawGXWToken]
 ```
 
-## Next controlled samples
+## Next controlled samples: Structured Ladder/FBD
 
-The next samples should move from arithmetic encoding to **ladder topology**:
+The ordinary Ladder baseline is now sufficient to start a read-only tokenizer/decoder. The next reverse-engineering line should compare equivalent logic in a GX Works2 **Structured Project / Structured Ladder-FBD** program:
 
 ```text
-37_SERIES_X1_M1_Y1.gxw
-X1 NO -- M1 NO -- OUT Y1
+48_STRUCT_X1_Y1.gxw
+X1 -> Y1
 
-38_PARALLEL_X1_X2_Y1.gxw
-X1 NO || X2 NO -- OUT Y1
+49_STRUCT_NC_X1_Y1.gxw
+/X1 -> Y1
 
-39_NC_X1_Y1.gxw
-X1 NC -- OUT Y1
+50_STRUCT_SERIES.gxw
+X1 -- M1 -> Y1
 
-40_SERIES_X1_NC_M1_Y1.gxw
-X1 NO -- M1 NC -- OUT Y1
+51_STRUCT_PARALLEL.gxw
+X1 || X2 -> Y1
 
-41_TIMER_T0_K10.gxw
-LD X1; OUT T0 K10
-
-42_COUNTER_C0_K10.gxw
-LD X1; OUT C0 K10
+52_STRUCT_MOV.gxw
+X1 -- MOV K10 D1
 ```
 
-These experiments are intended to determine whether `Program.pou` is primarily an instruction sequence (`LD`/`AND`/`OR`/`OUT`) or whether it also encodes explicit ladder branch/merge graph structure.
+The key question is whether Structured Ladder/FBD ultimately serializes to the same mnemonic token stream or introduces a separate node/graph representation and additional POU/label objects.
 
 ## Confidence levels
 
 Treat findings in three classes:
 
-- **Verified across controlled pairs:** X/Y/M/D type codes listed above, K/H distinctions listed above, octal X numeric conversion, little-endian value expansion, SET/RST opcodes, arithmetic ADD/SUB/MUL/DIV/DADD/DSUB sample encodings, MOV/DMOV/BMOV sample encodings, width-descriptor relation for the tested instructions.
-- **Strong but still scope-limited:** token framing, current `Program.pou` header/trailer relationships, `E8` vs `E9` semantic-width interpretation.
-- **Hypotheses requiring more samples:** universal family-relative opcode formula, universal fixed offsets, full `COMMENT.qcd` schema, writer requirements.
+- **Verified across controlled pairs:** X/Y/M/D/T/C type codes listed above; K/H distinctions; octal X numeric conversion; little-endian value expansion; LD/LDI, OR/ORI, AND/ANDI, ORB/ANB, OUT, SET/RST and END tokens; T/C address codes and the observed T/C output form; arithmetic ADD/SUB/MUL/DIV/DADD/DSUB encodings; MOV/DMOV/BMOV encodings; width-descriptor relation for the tested application instructions.
+- **Strong but still scope-limited:** token framing; current `Program.pou` header/trailer relationships; `E8` vs `E9` semantic-width interpretation; ordinary Ladder topology being represented as mnemonic/stack semantics in `Program.pou`; `MAIN.res` token-stream duplication.
+- **Hypotheses requiring more samples:** universal family-relative opcode formula; universal fixed offsets; full `COMMENT.qcd` schema; exact semantics of `04 21 03 04`; writer requirements; Structured Ladder/FBD storage format.
 
 Keep this document synchronized with machine-readable observations under `resources/gxw/` as the reverse-engineering corpus grows.
