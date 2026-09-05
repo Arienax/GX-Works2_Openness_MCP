@@ -1,6 +1,6 @@
 """Workbench widget facade with a full-size specification review experience.
 
-The historical widgets live in ``src/workbench_widgets.py``.  This package is
+The historical widgets live in ``src/workbench_widgets.py``. This package is
 preferred by Python's import machinery and loads that module under a private
 name, re-exporting its public surface while replacing ``RequirementReviewCard``
 with a compact chat summary card that opens a maximized specification
@@ -66,7 +66,7 @@ def _load_legacy_module():
 
 _legacy = _load_legacy_module()
 
-# Preserve the old module's public API.  The replacement RequirementReviewCard
+# Preserve the old module's public API. The replacement RequirementReviewCard
 # is defined below and intentionally overwrites the legacy export.
 for _name in dir(_legacy):
     if not _name.startswith("_"):
@@ -104,7 +104,9 @@ def _page_with_scroll(widget: QWidget | None, *, empty_text: str = "暂无内容
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
-    scroll.setFrameShape(QFrame.Shape.NoFrame if hasattr(QFrame, "Shape") else QFrame.NoFrame)
+    scroll.setFrameShape(
+        QFrame.Shape.NoFrame if hasattr(QFrame, "Shape") else QFrame.NoFrame
+    )
     host = QWidget()
     host_layout = QVBoxLayout(host)
     host_layout.setContentsMargins(2, 2, 8, 8)
@@ -161,7 +163,7 @@ class SpecificationWorkbenchDialog(QDialog):
             self.previous_spec,
             plc_model=self.plc_model,
         )
-        # The old card remains the state/validation engine.  Its editable
+        # The old card remains the state/validation engine. Its editable
         # sections are re-parented into dedicated workbench pages below.
         self.editor.hide()
 
@@ -341,9 +343,15 @@ class SpecificationWorkbenchDialog(QDialog):
             table = self.editor.parameter_table
             table.setMaximumHeight(16777215)
             table.setMinimumHeight(360)
-            table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            table.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Expanding,
+            )
         self.stack.addWidget(
-            _page_with_scroll(parameter_group, empty_text="当前规格没有需要确认的控制参数。")
+            _page_with_scroll(
+                parameter_group,
+                empty_text="当前规格没有需要确认的控制参数。",
+            )
         )
 
         io_group = _detach_widget(_group_by_title(self.editor, "I/O 分配"))
@@ -351,7 +359,10 @@ class SpecificationWorkbenchDialog(QDialog):
             table = self.editor.io_table_widget
             table.setMaximumHeight(16777215)
             table.setMinimumHeight(400)
-            table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            table.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Expanding,
+            )
         if hasattr(self.editor, "raw_preview"):
             self.editor.raw_preview.setMaximumHeight(120)
         self.stack.addWidget(
@@ -427,7 +438,9 @@ class SpecificationWorkbenchDialog(QDialog):
         summary = _legacy.format_contract_summary(approach)
         lines = [f"实现方案：{name}"]
         if summary:
-            lines.append(f"生成硬约束：{_legacy.naturalize_display_text(summary)}")
+            lines.append(
+                f"生成硬约束：{_legacy.naturalize_display_text(summary)}"
+            )
         guide = str(approach.get("generation_guide") or "").strip()
         if guide:
             lines.append("生成要点：" + _legacy.naturalize_display_text(guide))
@@ -445,9 +458,11 @@ class SpecificationWorkbenchDialog(QDialog):
         parameters = list(draft.get("parameters") or [])
         io_rows = list(draft.get("io_table") or [])
         approach = self._selected_approach(draft)
-        approach_name = _legacy.preferred_display_name(
-            approach, kind="方案", index=1
-        ) if approach else "未选择"
+        approach_name = (
+            _legacy.preferred_display_name(approach, kind="方案", index=1)
+            if approach
+            else "未选择"
+        )
 
         if errors:
             state = f"{len(errors)} 个问题待处理"
@@ -501,8 +516,10 @@ class SpecificationWorkbenchDialog(QDialog):
         draft = self._current_draft()
         self.editor.draft = copy.deepcopy(draft)
         self.draft_changed.emit(copy.deepcopy(draft))
-        self.footer_state.setText("草稿已保存到当前会话")
         self._sync_live_state()
+        self.footer_state.setText(
+            "草稿已保存 · " + self.footer_state.text()
+        )
 
     def _request_revision(self):
         self.editor._request_revision()
@@ -641,6 +658,7 @@ class RequirementReviewCard(QFrame):
         ).upper()
         self.draft = _legacy.build_review_draft(self.analysis, self.previous_spec)
         self.draft["plc_model"] = self.plc_model
+        self._draft_modified = False
         self._workbench = None
         self._theme = normalize_theme(get_theme_manager().current_theme)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -693,7 +711,9 @@ class RequirementReviewCard(QFrame):
             else "未选择"
         )
         summary_text = _legacy.naturalize_display_text(
-            draft.get("summary") or self.analysis.get("summary") or "规格草案已生成"
+            draft.get("summary")
+            or self.analysis.get("summary")
+            or "规格草案已生成"
         )
         lines = [summary_text]
         lines.append(
@@ -720,7 +740,10 @@ class RequirementReviewCard(QFrame):
             self._workbench.raise_()
             self._workbench.activateWindow()
             return
-        previous = self.draft if self.draft else self.previous_spec
+        # Preserve the original full-vs-delta semantics on the first open.
+        # Only reuse the in-session draft as the previous spec after the user
+        # has actually edited/saved something in the workbench.
+        previous = self.draft if self._draft_modified else self.previous_spec
         dialog = SpecificationWorkbenchDialog(
             self.analysis,
             self.original_request,
@@ -743,15 +766,19 @@ class RequirementReviewCard(QFrame):
         self._workbench = None
 
     def _on_draft_changed(self, draft):
+        self._draft_modified = True
         self.draft = copy.deepcopy(draft)
         self._refresh_summary(self.draft)
         self.draft_changed.emit(copy.deepcopy(draft))
 
     def _on_confirmed(self, spec):
         self.draft = copy.deepcopy(spec)
+        self._draft_modified = False
+        self._refresh_summary(self.draft)
         self.status.setText("已确认")
         self.status.setProperty("state", "ok")
-        self._refresh_summary(self.draft)
+        self.status.style().unpolish(self.status)
+        self.status.style().polish(self.status)
         self.confirmed.emit(spec)
 
     def apply_theme(self, mode):
@@ -781,6 +808,7 @@ class RequirementReviewCard(QFrame):
 
 
 __all__ = sorted(
-    name for name in globals()
+    name
+    for name in globals()
     if not name.startswith("_") and name not in {"copy", "importlib", "sys", "Path"}
 )
