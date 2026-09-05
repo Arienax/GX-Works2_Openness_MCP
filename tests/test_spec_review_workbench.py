@@ -44,6 +44,7 @@ def test_requirement_review_is_compact_summary_card():
     assert card.objectName() == "SpecSummaryCard"
     assert card.open_button.text() == "打开规格工作台"
     assert "FX3U" in card.summary.text()
+    assert card._draft_modified is False
 
 
 def test_specification_workbench_has_requested_three_column_layout():
@@ -56,6 +57,7 @@ def test_specification_workbench_has_requested_three_column_layout():
     )
     assert dialog.minimumWidth() >= 1000
     assert dialog.minimumHeight() >= 700
+    assert dialog.mode_badge.text() == "首次确认"
     assert dialog.nav.count() == 5
     assert dialog.stack.count() == 5
     assert [dialog.nav.item(i).text() for i in range(dialog.nav.count())] == [
@@ -67,6 +69,26 @@ def test_specification_workbench_has_requested_three_column_layout():
     ]
     assert dialog.validation_summary.objectName() == "SpecValidationSummary"
     assert dialog.confirm_button.text() == "确认并生成"
+    dialog.close()
+
+
+def test_specification_workbench_marks_previous_spec_as_delta():
+    _app()
+    previous = {
+        "schema_version": 3,
+        "plc_model": "FX3U",
+        "summary": "旧规格",
+        "selected_approach": {"name": "旧方案"},
+        "parameters": [],
+        "io_table": [],
+    }
+    dialog = SpecificationWorkbenchDialog(
+        _analysis(),
+        "修改启停控制",
+        previous_spec=previous,
+        plc_model="FX3U",
+    )
+    assert dialog.mode_badge.text() == "差异确认"
     dialog.close()
 
 
