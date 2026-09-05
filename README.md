@@ -1,5 +1,7 @@
 # GX Works2 Openness MCP
 
+English | [简体中文](README.zh-CN.md)
+
 > AI-assisted engineering workbench for Mitsubishi GX Works2.  
 > **Natural language → PLC logic → validation → GX Works2 → simulation.**
 
