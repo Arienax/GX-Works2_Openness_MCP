@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install test dependency
+        run: python -m pip install pytest
       - name: Apply patch
         run: python tools/_patch_simple_gx_bridge.py
       - name: Syntax check
