@@ -1,4 +1,4 @@
-name: Apply contract repair planner v2
+name: Harden contract repair scope
 
 on:
   push:
@@ -18,85 +18,64 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Patch main integration
+      - name: Harden planner and routing
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path("src/main.py")
-          text = path.read_text(encoding="utf-8")
-
-          def replace_once(old, new, label):
-              global text
+          def replace_once(path, old, new, label):
+              text = path.read_text(encoding="utf-8")
               count = text.count(old)
               if count != 1:
                   raise SystemExit(f"{label}: expected 1 match, found {count}")
-              text = text.replace(old, new, 1)
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
+          repair = Path("src/contract_repair.py")
           replace_once(
-              "from confirmed_spec import canonicalize_confirmed_spec\n",
-              "from confirmed_spec import canonicalize_confirmed_spec\n"
-              "from contract_repair import (\n"
-              "    build_contract_repair_plan,\n"
-              "    format_contract_repair_plan,\n"
-              "    patch_device_addresses,\n"
-              ")\n",
-              "contract repair imports",
+              repair,
+              '''_DEVICE_TOKEN_RE = re.compile(\n    r"(?<![A-Za-z0-9_])(?:SM|SD|TS|TC|CS|CC|[XYMSTCDRVZ])\\d+(?![A-Za-z0-9_])",\n    re.IGNORECASE,\n)\n''',
+              '''_DEVICE_TOKEN_RE = re.compile(\n    r"(?<![A-Za-z0-9_])(?:SM|SD|TS|TC|CS|CC|[XYMSTCDRVZ])\\d+(?![A-Za-z0-9_])",\n    re.IGNORECASE,\n)\n_INDEXED_DEVICE_TOKEN_RE = re.compile(\n    r"(?<![A-Za-z0-9_])(?P<base>(?:SM|SD|[XYMSTCDR])\\d+)(?P<index>[VZ]\\d+)(?![A-Za-z0-9_])",\n    re.IGNORECASE,\n)\n''',
+              "indexed device token regex",
           )
-
-          partial_marker = '''                if self.target_mode == "ladder" and parsed.get("mode") == "partial":\n'''
-          partial_injection = '''                if self.repair_mode and self.task_type == "contract_repair":\n                    if parsed.get("delete_rung_ids"):\n                        raise PLCJsonValidationError(\n                            "$.delete_rung_ids: contract repair may not delete existing rungs"\n                        )\n                    if self.allowed_addresses:\n                        referenced_addresses = patch_device_addresses(parsed)\n                        outside_devices = referenced_addresses - self.allowed_addresses\n                        if outside_devices:\n                            raise PLCJsonValidationError(\n                                "$.rungs: contract repair introduced out-of-scope devices "\n                                + ", ".join(sorted(outside_devices))\n                            )\n                if self.target_mode == "ladder" and parsed.get("mode") == "partial":\n'''
-          replace_once(partial_marker, partial_injection, "contract repair device scope")
-
           replace_once(
-              '''                    except ApproachContractValidationError as contract_error:\n                        contract_mismatch = {\n''',
-              '''                    except ApproachContractValidationError as contract_error:\n                        if self.task_type == "contract_repair":\n                            raise\n                        contract_mismatch = {\n''',
-              "contract repair validation gate",
+              repair,
+              '''def _devices_in_value(value):\n    return {item.upper() for item in _DEVICE_TOKEN_RE.findall(str(value or ""))}\n''',
+              '''def _devices_in_value(value):\n    text = str(value or "")\n    devices = {item.upper() for item in _DEVICE_TOKEN_RE.findall(text)}\n    for match in _INDEXED_DEVICE_TOKEN_RE.finditer(text):\n        base = match.group("base").upper()\n        index = match.group("index").upper()\n        devices.update({base + index, base, index})\n    return devices\n''',
+              "indexed device extraction",
           )
-
           replace_once(
-              '''            except Exception as first_err:\n                if self.target_mode != "ladder":\n''',
-              '''            except Exception as first_err:\n                if self.task_type == "contract_repair":\n                    self.failure.emit(\n                        self.task_id,\n                        "方案约束修复候选未通过验证，不会继续隐藏重试: "\n                        f"{first_err}",\n                    )\n                    return\n                if self.target_mode != "ladder":\n''',
-              "disable hidden contract repair retry",
+              repair,
+              '''    existing_addresses = set(features.get("devices") or [])\n    existing_addresses.update(\n        str(addr).strip().upper()\n        for addr in ((ladder or {}).get("device_comments") or {})\n        if str(addr).strip()\n    )\n    existing_addresses.update(\n        str(item).strip().upper()\n        for item in contract.get("required_devices") or []\n        if str(item).strip()\n    )\n    allowed_addresses = sorted(existing_addresses)\n''',
+              '''    # Device scope follows the selected evidence rungs rather than the\n    # entire program.  This prevents the model from borrowing an unrelated\n    # address merely because that address exists elsewhere in the project.\n    existing_addresses = set()\n    allowed_rung_id_set = set(allowed_rung_ids)\n    for rung in (ladder or {}).get("rungs") or []:\n        if not isinstance(rung, Mapping):\n            continue\n        if rung.get("rung_id") is None or int(rung.get("rung_id")) not in allowed_rung_id_set:\n            continue\n        existing_addresses.update(_rung_devices(rung))\n    existing_addresses.update(\n        str(item).strip().upper()\n        for item in contract.get("required_devices") or []\n        if str(item).strip()\n    )\n    allowed_addresses = sorted(existing_addresses)\n''',
+              "evidence-rung device scope",
           )
 
-          final_marker = "            # 将最终 JSON 写入磁盘\n"
-          final_index = text.index(final_marker)
-          before = text[:final_index]
-          after = text[final_index:]
-          old_ir_validation = '''                validate_plc_ir(\n                    program_ir,\n                    confirmed_spec=self.confirmed_context,\n                )\n'''
-          if after.count(old_ir_validation) < 1:
-              raise SystemExit("candidate-first IR validation: marker not found")
-          after = after.replace(
-              old_ir_validation,
-              '''                validate_plc_ir(\n                    program_ir,\n                    confirmed_spec=(\n                        None\n                        if contract_mismatch\n                        and self.task_type != "contract_repair"\n                        else self.confirmed_context\n                    ),\n                )\n''',
-              1,
-          )
-          text = before + after
-
+          pattern = Path("src/pattern_library.py")
           replace_once(
-              '''            "selected_finding_ids": task.get("selected_finding_ids", []),\n''',
-              '''            "selected_finding_ids": task.get("selected_finding_ids", []),\n            "contract_repair_plan": task.get("contract_repair_plan"),\n''',
-              "contract repair audit metadata",
+              pattern,
+              '''        if task_type in {"generate", "edit", "repair", "debug_fix"}:\n            bundles.extend(["io_mapping", "output_ownership", "scan_semantics"])\n        if task_type in {"repair", "debug_fix"}:\n            bundles.append("debugging")\n''',
+              '''        if task_type in {"generate", "edit", "repair", "debug_fix", "contract_repair"}:\n            bundles.extend(["io_mapping", "output_ownership", "scan_semantics"])\n        if task_type in {"repair", "debug_fix", "contract_repair"}:\n            bundles.append("debugging")\n''',
+              "contract repair routing",
           )
 
-          start = text.index("    def _repair_current_contract_mismatch(self):")
-          end = text.index("    def _export_current_version(self):", start)
-          replacement = '''    def _repair_current_contract_mismatch(self):\n        if self.active_task:\n            self.statusBar().showMessage("当前已有任务运行。", 3000)\n            return\n        if not self.current_project_id or not self.current_version_id:\n            return\n\n        project_id = self.current_project_id\n        version_id = self.current_version_id\n        project = self.store.get_project(project_id)\n        version = self.store.get_version(project_id, version_id)\n        if not project or not version:\n            return\n        mismatch = version.get("contract_mismatch") or {}\n        if not mismatch:\n            self.statusBar().showMessage("当前版本没有待修复的方案约束。", 4000)\n            return\n\n        selected = self._version_with_json(project, version_id)\n        if not selected or not isinstance(selected[1], dict):\n            self.statusBar().showMessage("当前版本没有可修复的梯形图 JSON。", 4000)\n            return\n        _version, previous_json = selected\n        confirmed_spec = self._version_confirmed_spec(version)\n        if not confirmed_spec:\n            QMessageBox.warning(\n                self,\n                "无法修复",\n                "当前版本缺少已确认规格快照，不能自动修改实现方案。",\n            )\n            return\n\n        plc_model = (\n            version.get("plc_model")\n            or project.get("plc_model")\n            or "FX3U"\n        )\n        try:\n            plan = build_contract_repair_plan(\n                previous_json,\n                confirmed_spec,\n                plc_model=plc_model,\n                mismatch=mismatch,\n            )\n        except Exception as error:\n            QMessageBox.warning(\n                self,\n                "无法建立修复计划",\n                naturalize_display_text(error),\n            )\n            return\n\n        if plan.get("repairability") == "not_needed":\n            QMessageBox.information(\n                self,\n                "无需修复",\n                "重新检查后当前程序已经满足 generation_contract。",\n            )\n            return\n\n        if plan.get("repairability") != "scoped_patch":\n            details = "\\n".join(\n                f"• {item.get('kind')}: {item.get('value')}"\n                for item in (plan.get("violations") or [])\n            )\n            QMessageBox.warning(\n                self,\n                "无法安全自动修复",\n                (\n                    f"{plan.get('reason', '当前约束缺少可定位的语义上下文')}\\n\\n"\n                    f"{details}\\n\\n"\n                    "系统不会再让 AI 猜测 MOV/SET/RST 等指令应该放在哪里。\\n"\n                    "请在已确认方案中补充目标软元件、状态寄存器或具体实现语义后再生成。"\n                ),\n            )\n            return\n\n        csv_name = (version.get("artifacts") or {}).get(\n            "program_csv", "program.csv"\n        )\n        answer = QMessageBox.question(\n            self,\n            "确认受限方案约束修复",\n            (\n                f"基础版本：{version_display_name(version_id)}\\n"\n                f"原始 CSV 已保留：{csv_name}\\n\\n"\n                "这次不会重新生成整份程序，只允许修改计划中的既有梯级，"\n                "并禁止引入计划外软元件。\\n\\n"\n                f"{format_contract_repair_plan(plan)}\\n\\n"\n                "确认后创建一个新的修复版本；原始 CSV 不会覆盖。"\n            ),\n            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,\n            QMessageBox.StandardButton.No,\n        )\n        if answer != QMessageBox.StandardButton.Yes:\n            return\n        if not self._ensure_api_configured():\n            self.statusBar().showMessage("修复需要先完成 API 配置。", 4000)\n            return\n\n        new_version_id, output_dir = self.store.prepare_version(project_id)\n        audit_plan = {\n            key: copy.deepcopy(plan.get(key))\n            for key in (\n                "plan_id",\n                "repairability",\n                "approach_name",\n                "violations",\n                "allowed_rung_ids",\n                "allowed_addresses",\n                "scope_reasons",\n                "fallback_scope",\n            )\n        }\n        task_id = f"{project_id}:{new_version_id}"\n        self.active_task = {\n            "id": task_id,\n            "project_id": project_id,\n            "version_id": new_version_id,\n            "phase": "compile",\n            "summary": f"方案约束受限修复：{plan.get('plan_id')}",\n            "parent_version_id": version_id,\n            "confirmed_spec_snapshot": copy.deepcopy(confirmed_spec),\n            "confirmed_spec_hash": self._json_sha256(confirmed_spec),\n            "plc_model": plc_model,\n            "contract_repair_plan": audit_plan,\n        }\n        self.store.add_message(\n            project_id,\n            "assistant",\n            (\n                f"已确认基于{version_display_name(version_id)}执行受限方案约束修复；"\n                f"允许修改梯级 {', '.join(map(str, plan['allowed_rung_ids']))}。"\n                "原始版本和 CSV 保持不变。"\n            ),\n            kind="system",\n        )\n        self._set_busy(True, "正在执行受限方案约束修复")\n        self.activity_panel.reset()\n        self.activity_panel.set_status("AI 正在生成受限 partial patch")\n\n        thread = CompilerThread(\n            task_id,\n            plan["prompt"],\n            "high",\n            "ladder",\n            output_dir,\n            previous_json=previous_json,\n            previous_ir=self.store.load_program_ir(project_id, version_id),\n            conversation_history=[],\n            confirmed_context=confirmed_spec,\n            task_type="contract_repair",\n            current_version_json=previous_json,\n            plc_model=plc_model,\n            program_name=version.get("program_name") or "MAIN",\n            revision=int(str(new_version_id).lstrip("vV") or "1"),\n            requirement_text=str(confirmed_spec.get("summary") or ""),\n            repair_mode=True,\n            allowed_rung_ids=plan["allowed_rung_ids"],\n            allowed_addresses=plan["allowed_addresses"],\n        )\n        self._retain_worker_thread("_compiler_thread", thread)\n        thread.thinking_updated.connect(self._append_reasoning)\n        thread.content_updated.connect(self._append_content)\n        thread.progress_updated.connect(self._progress_updated)\n        thread.success.connect(self._compile_success)\n        thread.failure.connect(self._compile_failure)\n        thread.start()\n        if self.current_project_id == project_id:\n            self._render_conversation(self.store.get_project(project_id))\n\n'''
-          text = text[:start] + replacement + text[end:]
-          path.write_text(text, encoding="utf-8")
+          test_path = Path("tests/test_contract_repair_planner.py")
+          test_text = test_path.read_text(encoding="utf-8")
+          marker = "def test_indexed_devices_are_enforced_by_patch_scope():"
+          if marker not in test_text:
+              test_text += '''\n\ndef test_indexed_devices_are_enforced_by_patch_scope():\n    partial = {\n        "mode": "partial",\n        "rungs": [\n            {\n                "rung_id": 1,\n                "header_element": None,\n                "shared_inputs": [],\n                "branches": [\n                    {\n                        "branch_id": 1,\n                        "y_offset_level": 0,\n                        "inputs": [{"type": "NO", "address": "X0"}],\n                        "outputs": [\n                            {\n                                "type": "APP_INSTR",\n                                "opcode": "MOV",\n                                "operands": ["D0", "D100Z0"],\n                            }\n                        ],\n                    }\n                ],\n            }\n        ],\n    }\n    addresses = patch_device_addresses(partial)\n    assert {"X0", "D0", "D100Z0", "D100", "Z0"}.issubset(addresses)\n\n\ndef test_contract_repair_router_gets_repair_safety_bundles():\n    source = Path("src/pattern_library.py").read_text(encoding="utf-8")\n    assert '"contract_repair"' in source\n    assert '"repair", "debug_fix", "contract_repair"' in source\n'''
+              test_path.write_text(test_text, encoding="utf-8")
           PY
       - name: Syntax check
-        run: python -m py_compile src/main.py src/contract_repair.py tests/test_contract_repair_planner.py
+        run: python -m py_compile src/contract_repair.py src/pattern_library.py tests/test_contract_repair_planner.py
       - name: Install pytest
         run: python -m pip install pytest
       - name: Run focused tests
         run: pytest -q tests/test_contract_repair_planner.py tests/test_contract_conflict_resolution.py tests/test_instruction_registry.py
-      - name: Commit integration
+      - name: Commit hardening
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/main.py
-          git commit -m "refactor: make contract repair evidence-bound"
+          git add src/contract_repair.py src/pattern_library.py tests/test_contract_repair_planner.py
+          git commit -m "fix: harden evidence-bound contract repair scope"
           git push origin HEAD:main
