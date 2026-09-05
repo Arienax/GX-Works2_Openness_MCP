@@ -54,6 +54,7 @@ ICON_CODEPOINTS = {
     "plug": 0xEB2D,
     "paintcan": 0xEB2A,
     "preview": 0xEB2F,
+    "open-preview": 0xEB2F,
     "project": 0xEB30,
     "robot": 0xEC20,
     "root-folder-opened": 0xEB45,
