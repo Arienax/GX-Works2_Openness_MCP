@@ -1,6 +1,10 @@
 import csv
 import json
+import os
+import re
 from pathlib import Path
+
+import pytest
 
 from draw import generate_gx_works2_csv
 from gxworks2.csv_importer import (
@@ -9,8 +13,19 @@ from gxworks2.csv_importer import (
 )
 from gxworks2.import_service import ImportService
 from gxworks2.csv_manager import CSVManager, GXWORKS2_COMMENT_HEADER, GXWORKS2_HEADER
-from gxworks2.models import GXWorks2Session, SyncStatus
-from gxworks2.sync_service import GXWorks2SyncService
+from gxworks2.diagnostics import (
+    GXAutomationError,
+    describe_exception,
+    exception_details,
+)
+from gxworks2.models import (
+    GXSyncErrorCode,
+    GXWorks2Session,
+    SyncResult,
+    SyncStatus,
+)
+from gxworks2.sync_service import ERROR_SUGGESTIONS, GXWorks2SyncService
+from gxworks2.ui_automation import PywinautoGXWorks2UIAutomation
 
 
 def _write_program(path, output="Y000", condition="X000"):
@@ -356,3 +371,441 @@ def test_same_gx_project_name_cannot_silently_switch_plc_ai_projects(tmp_path):
     assert first.status == SyncStatus.SYNCED
     assert second.status == SyncStatus.UNBOUND
     assert second.details["binding_mismatch"] is True
+
+
+def _fast_sync_service(tmp_path, automation, finder=None):
+    return GXWorks2SyncService(
+        finder or _Finder(),
+        automation,
+        CSVManager(),
+        tmp_path / "diagnostic-backups",
+        export_validation_timeout=0.02,
+        export_validation_poll_interval=0.01,
+        export_retry_delay=0,
+    )
+
+
+class _RetryAutomation(_Automation):
+    def __init__(
+        self,
+        program,
+        comments,
+        *,
+        program_failures=0,
+        comment_failures=0,
+        error_factory=RuntimeError,
+    ):
+        super().__init__(program, comments)
+        self.program_failures = int(program_failures)
+        self.comment_failures = int(comment_failures)
+        self.error_factory = error_factory
+        self.inspect_calls = 0
+        self.program_calls = 0
+        self.comment_calls = 0
+        self.recovery_calls = 0
+
+    def inspect_project(self, session):
+        self.inspect_calls += 1
+        return super().inspect_project(session)
+
+    def export_current_program(self, session, destination):
+        self.program_calls += 1
+        if self.program_calls <= self.program_failures:
+            raise self.error_factory()
+        return super().export_current_program(session, destination)
+
+    def export_current_comments(self, session, destination):
+        self.comment_calls += 1
+        if self.comment_calls <= self.comment_failures:
+            raise self.error_factory()
+        return super().export_current_comments(session, destination)
+
+    def prepare_export_retry(self, _session):
+        self.recovery_calls += 1
+        return {"dismissed_dialogs": ["CSV"], "main_activated": True}
+
+
+def test_empty_exception_description_never_returns_an_empty_string():
+    assert describe_exception(TimeoutError()) == "TimeoutError (TimeoutError())"
+    assert describe_exception(RuntimeError()) == "RuntimeError (RuntimeError())"
+
+
+def test_sync_result_serialization_keeps_success_and_adds_agent_fields():
+    result = SyncResult(
+        False,
+        SyncStatus.ERROR,
+        "failed",
+        GXSyncErrorCode.GX_FILE_DIALOG_TIMEOUT,
+        stage="wait_program_file_dialog",
+        retryable=True,
+    )
+
+    payload = result.to_dict()
+
+    assert payload["success"] is False
+    assert payload["ok"] is False
+    assert payload["stage"] == "wait_program_file_dialog"
+    assert payload["retryable"] is True
+    assert payload["error_code"] == "gx_file_dialog_timeout"
+
+
+@pytest.mark.parametrize("code", list(GXSyncErrorCode))
+def test_every_sync_error_code_has_stable_diagnostics(code):
+    result = GXWorks2SyncService._error(
+        "diagnostic",
+        code,
+        stage="diagnostic_stage",
+        retryable=False,
+    )
+
+    assert result.error_code is code
+    assert result.details["error_code"] == code.value
+    assert result.details["stage"] == "diagnostic_stage"
+    assert result.details["suggestion"] == ERROR_SUGGESTIONS[code]
+    assert "exception_type" in result.details
+    assert "exception_repr" in result.details
+    assert "exception_message" in result.details
+
+
+def test_transient_program_timeout_retries_the_complete_snapshot(tmp_path):
+    app = tmp_path / "app.csv"
+    comments = tmp_path / "comments.csv"
+    _write_program(app)
+    _write_comments(comments)
+    automation = _RetryAutomation(
+        app,
+        comments,
+        program_failures=1,
+        error_factory=TimeoutError,
+    )
+
+    result = _fast_sync_service(tmp_path, automation).inspect(app, comments)
+
+    assert result.success
+    assert result.status == SyncStatus.SYNCED
+    assert automation.program_calls == 2
+    assert automation.comment_calls == 1
+    assert automation.inspect_calls == 2
+    assert automation.recovery_calls == 1
+    assert result.details["export_attempt"] == 2
+    assert result.details["export_attempts"][0]["error_code"] == "gx_uia_timeout"
+    assert result.details["export_attempts"][0]["exception_type"] == "TimeoutError"
+
+
+def test_transient_comment_failure_restarts_at_program_export(tmp_path):
+    app = tmp_path / "app.csv"
+    comments = tmp_path / "comments.csv"
+    _write_program(app)
+    _write_comments(comments)
+    automation = _RetryAutomation(app, comments, comment_failures=1)
+
+    result = _fast_sync_service(tmp_path, automation).inspect(app, comments)
+
+    assert result.success
+    assert automation.program_calls == 2
+    assert automation.comment_calls == 2
+    assert automation.recovery_calls == 1
+    assert result.details["export_attempts"][0]["error_code"] == (
+        "gx_comment_export_failed"
+    )
+
+
+def test_access_denied_is_diagnostic_and_is_not_automatically_retried(tmp_path):
+    app = tmp_path / "app.csv"
+    comments = tmp_path / "comments.csv"
+    _write_program(app)
+    _write_comments(comments)
+    automation = _RetryAutomation(
+        app,
+        comments,
+        program_failures=2,
+        error_factory=lambda: PermissionError(13, "Access denied"),
+    )
+
+    result = _fast_sync_service(tmp_path, automation).inspect(app, comments)
+
+    assert not result.success
+    assert result.error_code == GXSyncErrorCode.GX_UIA_ACCESS_DENIED
+    assert result.stage == "export_program"
+    assert result.retryable is False
+    assert automation.program_calls == 1
+    assert automation.recovery_calls == 0
+    assert result.details["exception_type"] == "PermissionError"
+
+
+def test_empty_runtime_error_reports_type_after_both_attempts(tmp_path):
+    app = tmp_path / "app.csv"
+    comments = tmp_path / "comments.csv"
+    _write_program(app)
+    _write_comments(comments)
+    automation = _RetryAutomation(app, comments, program_failures=2)
+
+    result = _fast_sync_service(tmp_path, automation).inspect(app, comments)
+
+    assert not result.success
+    assert result.error_code == GXSyncErrorCode.GX_PROGRAM_EXPORT_FAILED
+    assert result.message == "无法导出GX Works2当前MAIN：RuntimeError (RuntimeError())"
+    assert result.details["exception_type"] == "RuntimeError"
+    assert result.details["exception_repr"] == "RuntimeError()"
+    assert result.details["attempt"] == 2
+    assert len(result.details["attempts"]) == 2
+
+
+class _InvalidThenMissingAutomation(_Automation):
+    def __init__(self, program, comments):
+        super().__init__(program, comments)
+        self.program_calls = 0
+        self.recovery_calls = 0
+
+    def export_current_program(self, _session, destination):
+        self.program_calls += 1
+        if self.program_calls == 1:
+            Path(destination).write_bytes(b"invalid partial export")
+
+    def prepare_export_retry(self, _session):
+        self.recovery_calls += 1
+        return {"dismissed_dialogs": [], "main_activated": True}
+
+
+def test_retry_cannot_accept_the_previous_attempt_partial_file(tmp_path):
+    app = tmp_path / "app.csv"
+    comments = tmp_path / "comments.csv"
+    _write_program(app)
+    _write_comments(comments)
+    automation = _InvalidThenMissingAutomation(app, comments)
+
+    result = _fast_sync_service(tmp_path, automation).inspect(app, comments)
+
+    assert not result.success
+    assert result.error_code == GXSyncErrorCode.GX_PROGRAM_EXPORT_INVALID
+    assert automation.program_calls == 2
+    assert automation.recovery_calls == 1
+    assert not Path(result.details["export_program_path"]).exists()
+    assert "程序CSV文件不存在" in result.details["validation_errors"]
+
+
+def test_invalid_comment_export_retries_the_program_and_comment_together(tmp_path):
+    app = tmp_path / "app.csv"
+    comments = tmp_path / "comments.csv"
+    _write_program(app)
+    _write_comments(comments)
+
+    class _InvalidCommentsAutomation(_RetryAutomation):
+        def export_current_comments(self, _session, destination):
+            self.comment_calls += 1
+            Path(destination).write_bytes(b"invalid comments")
+
+    automation = _InvalidCommentsAutomation(app, comments)
+    result = _fast_sync_service(tmp_path, automation).inspect(app, comments)
+
+    assert not result.success
+    assert result.error_code == GXSyncErrorCode.GX_COMMENT_EXPORT_INVALID
+    assert result.stage == "validate_comment_csv"
+    assert automation.program_calls == 2
+    assert automation.comment_calls == 2
+    assert automation.recovery_calls == 1
+
+
+def test_manifest_failure_is_separate_and_never_retried(tmp_path):
+    app = tmp_path / "app.csv"
+    comments = tmp_path / "comments.csv"
+    _write_program(app)
+    _write_comments(comments)
+    automation = _RetryAutomation(app, comments)
+
+    class _ManifestFailureManager(CSVManager):
+        @staticmethod
+        def write_checksum_manifest(_folder):
+            raise OSError("manifest blocked")
+
+    service = GXWorks2SyncService(
+        _Finder(),
+        automation,
+        _ManifestFailureManager(),
+        tmp_path / "manifest-backups",
+        export_retry_delay=0,
+    )
+    result = service.inspect(app, comments)
+
+    assert not result.success
+    assert result.error_code == GXSyncErrorCode.GX_EXPORT_MANIFEST_FAILED
+    assert result.stage == "write_manifest"
+    assert result.retryable is False
+    assert automation.program_calls == 1
+    assert automation.comment_calls == 1
+    assert automation.recovery_calls == 0
+
+
+def test_project_precondition_is_manual_retry_only(tmp_path):
+    app = tmp_path / "app.csv"
+    comments = tmp_path / "comments.csv"
+    _write_program(app)
+    _write_comments(comments)
+    automation = _Automation(app, comments)
+    automation.inspect_project = lambda _session: {
+        "automation_available": True,
+        "project_open": False,
+        "program_ready": False,
+        "project_name": "Fixture",
+    }
+
+    result = _fast_sync_service(tmp_path, automation).inspect(app, comments)
+
+    assert not result.success
+    assert result.error_code == GXSyncErrorCode.GX_PROJECT_NOT_OPEN
+    assert result.stage == "check_project"
+    assert result.retryable is True
+    assert result.details["attempts"] == []
+
+
+def test_baseline_read_and_write_failures_have_separate_codes(tmp_path):
+    app = tmp_path / "app.csv"
+    comments = tmp_path / "comments.csv"
+    _write_program(app)
+    _write_comments(comments)
+
+    read_service = _fast_sync_service(tmp_path, _Automation(app, comments))
+    read_service.baseline_store.load = lambda _identity: (_ for _ in ()).throw(
+        OSError("read blocked")
+    )
+    read_result = read_service.inspect(app, comments)
+    assert read_result.error_code == GXSyncErrorCode.GX_BASELINE_READ_FAILED
+    assert read_result.stage == "compare"
+
+    write_service = _fast_sync_service(tmp_path, _Automation(app, comments))
+    write_service.baseline_store.save = lambda *_args, **_kwargs: (
+        (_ for _ in ()).throw(OSError("write blocked"))
+    )
+    write_result = write_service.inspect(app, comments)
+    assert write_result.error_code == GXSyncErrorCode.GX_BASELINE_WRITE_FAILED
+    assert write_result.stage == "save_baseline"
+
+
+def test_structured_automation_error_keeps_its_specific_stage(tmp_path):
+    app = tmp_path / "app.csv"
+    comments = tmp_path / "comments.csv"
+    _write_program(app)
+    _write_comments(comments)
+
+    class _DialogTimeoutAutomation(_RetryAutomation):
+        def export_current_program(self, _session, _destination):
+            self.program_calls += 1
+            raise GXAutomationError(
+                GXSyncErrorCode.GX_FILE_DIALOG_TIMEOUT,
+                "wait_program_file_dialog",
+                "12.0秒内未检测到GX Works2文件选择窗口。",
+                retryable=True,
+                details={"timeout_seconds": 12.0},
+            )
+
+    automation = _DialogTimeoutAutomation(app, comments)
+    result = _fast_sync_service(tmp_path, automation).inspect(app, comments)
+
+    assert result.error_code == GXSyncErrorCode.GX_FILE_DIALOG_TIMEOUT
+    assert result.stage == "wait_program_file_dialog"
+    assert result.details["timeout_seconds"] == 12.0
+    assert automation.program_calls == 2
+
+
+def test_file_dialog_wait_raises_specific_timeout_with_actual_duration():
+    automation = PywinautoGXWorks2UIAutomation(timeout=0.01)
+    automation._legacy_dialog = lambda *_args, **_kwargs: None
+
+    with pytest.raises(GXAutomationError) as captured:
+        automation._wait_legacy_dialog(
+            _Finder().session,
+            re.compile("CSV"),
+            timeout=0.01,
+            failure_stage="wait_program_file_dialog",
+        )
+
+    error = captured.value
+    assert error.code == GXSyncErrorCode.GX_FILE_DIALOG_TIMEOUT
+    assert error.stage == "wait_program_file_dialog"
+    assert error.retryable is True
+    assert error.details["timeout_seconds"] == 0.01
+    assert error.details["elapsed_seconds"] >= 0.01
+    assert exception_details(error)["exception_type"] == "TimeoutError"
+
+
+def test_project_inspection_preserves_empty_uia_timeout_details():
+    automation = PywinautoGXWorks2UIAutomation(timeout=0.01)
+
+    def fail_window(_session):
+        raise TimeoutError()
+
+    automation._main_window = fail_window
+    state = automation.inspect_project(_Finder().session)
+
+    assert state["automation_available"] is False
+    assert state["error_code"] == GXSyncErrorCode.GX_UIA_TIMEOUT
+    assert state["stage"] == "inspect_project"
+    assert state["retryable"] is True
+    assert state["exception_type"] == "TimeoutError"
+    assert "TimeoutError" in state["message"]
+
+
+def test_sync_failure_dialog_expands_details_and_hides_unsafe_retry():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from main import GXWorks2SyncErrorDialog
+    from qt_compat import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    retryable = GXWorks2SyncService._error(
+        "未检测到文件窗口",
+        GXSyncErrorCode.GX_FILE_DIALOG_TIMEOUT,
+        stage="wait_program_file_dialog",
+        retryable=True,
+        details={
+            "gx_running": True,
+            "project_open": True,
+            "program_ready": True,
+            "program_name": "MAIN",
+        },
+    )
+    dialog = GXWorks2SyncErrorDialog(retryable)
+    assert dialog.retry_button is not None
+    assert dialog.details_editor.isHidden()
+    dialog._toggle_details()
+    assert not dialog.details_editor.isHidden()
+    assert '"ok": false' in dialog.details_editor.toPlainText()
+    assert dialog.details_button.text() == "收起技术详情"
+    dialog.close()
+
+    non_retryable = GXWorks2SyncService._error(
+        "权限不一致",
+        GXSyncErrorCode.GX_UIA_ACCESS_DENIED,
+        stage="activate_main",
+        retryable=False,
+    )
+    dialog = GXWorks2SyncErrorDialog(non_retryable)
+    assert dialog.retry_button is None
+    dialog.close()
+    app.processEvents()
+
+
+def test_pending_manual_retry_waits_until_the_worker_is_released():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from main import _IndustrialWorkbenchUI
+
+    class _Workbench:
+        def __init__(self):
+            self._gx_sync_retry_pending = True
+            self._gxworks2_sync_thread = object()
+            self.started = 0
+
+        def _gx_sync_busy(self):
+            return self._gxworks2_sync_thread is not None
+
+        def _sync_current_version_with_gxworks2(self):
+            self.started += 1
+
+    workbench = _Workbench()
+    _IndustrialWorkbenchUI._run_pending_gx_sync_retry(workbench)
+    assert workbench.started == 0
+    assert workbench._gx_sync_retry_pending is True
+
+    workbench._gxworks2_sync_thread = None
+    _IndustrialWorkbenchUI._run_pending_gx_sync_retry(workbench)
+    assert workbench.started == 1
+    assert workbench._gx_sync_retry_pending is False

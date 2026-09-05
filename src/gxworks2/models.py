@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 
 class ImportErrorCode(str, Enum):
@@ -21,6 +21,30 @@ class ImportErrorCode(str, Enum):
     IMPORT_VERIFICATION_FAILED = "import_verification_failed"
     AUTOMATION_UNAVAILABLE = "automation_unavailable"
     AUTOMATION_FAILED = "automation_failed"
+
+
+class GXSyncErrorCode(str, Enum):
+    """Stable, machine-readable failures for the read-side GX sync flow."""
+
+    GX_LOCAL_CSV_INVALID = "gx_local_csv_invalid"
+    GX_WORKS2_NOT_RUNNING = "gx_works2_not_running"
+    GX_PROJECT_NOT_OPEN = "gx_project_not_open"
+    GX_PROGRAM_NOT_READY = "gx_program_not_ready"
+    GX_AUTOMATION_UNAVAILABLE = "gx_automation_unavailable"
+    GX_PROJECT_INSPECT_FAILED = "gx_project_inspect_failed"
+    GX_MAIN_ACTIVATE_FAILED = "gx_main_activate_failed"
+    GX_EXPORT_MENU_FAILED = "gx_export_menu_failed"
+    GX_FILE_DIALOG_TIMEOUT = "gx_file_dialog_timeout"
+    GX_UIA_TIMEOUT = "gx_uia_timeout"
+    GX_UIA_ACCESS_DENIED = "gx_uia_access_denied"
+    GX_PROGRAM_EXPORT_FAILED = "gx_program_export_failed"
+    GX_PROGRAM_EXPORT_INVALID = "gx_program_export_invalid"
+    GX_COMMENT_EXPORT_FAILED = "gx_comment_export_failed"
+    GX_COMMENT_EXPORT_INVALID = "gx_comment_export_invalid"
+    GX_EXPORT_MANIFEST_FAILED = "gx_export_manifest_failed"
+    GX_BASELINE_READ_FAILED = "gx_baseline_read_failed"
+    GX_BASELINE_WRITE_FAILED = "gx_baseline_write_failed"
+    GX_UNEXPECTED_ERROR = "gx_unexpected_error"
 
 
 class SyncStatus(str, Enum):
@@ -91,15 +115,18 @@ class SyncResult:
     success: bool
     status: SyncStatus
     message: str
-    error_code: Optional[ImportErrorCode] = None
+    error_code: Optional[Union[ImportErrorCode, GXSyncErrorCode]] = None
     project_name: str = ""
     exported_program_path: str = ""
     exported_comment_path: str = ""
     details: Dict[str, Any] = field(default_factory=dict)
+    stage: str = ""
+    retryable: bool = False
 
     def to_dict(self):
         payload = asdict(self)
         payload["status"] = self.status.value
+        payload["ok"] = self.success
         if self.error_code is not None:
             payload["error_code"] = self.error_code.value
         return payload

@@ -5,6 +5,14 @@ from pathlib import Path
 import re
 import time
 
+from .diagnostics import (
+    GXAutomationError,
+    classify_automation_error,
+    describe_exception,
+    exception_details,
+)
+from .models import GXSyncErrorCode
+
 
 class GXWorks2UIAutomation(ABC):
     """Internal automation boundary; callers never receive click primitives."""
@@ -37,6 +45,11 @@ class GXWorks2UIAutomation(ABC):
             "save_required": True,
             "message": "请在GX Works2中保存当前工程。",
         }
+
+    def prepare_export_retry(self, session):
+        """Safely reset transient read/export UI before a retry."""
+
+        return {"dismissed_dialogs": [], "main_activated": False}
 
 
 class UnavailableGXWorks2UIAutomation(GXWorks2UIAutomation):
@@ -102,6 +115,14 @@ class PywinautoGXWorks2UIAutomation(GXWorks2UIAutomation):
 
     def __init__(self, timeout=12.0):
         self.timeout = float(timeout)
+        self._progress_reporter = None
+
+    def set_progress_reporter(self, reporter):
+        self._progress_reporter = reporter
+
+    def _report_progress(self, stage, message):
+        if self._progress_reporter is not None:
+            self._progress_reporter(stage, message)
 
     @staticmethod
     def available():
@@ -213,13 +234,24 @@ class PywinautoGXWorks2UIAutomation(GXWorks2UIAutomation):
                     self.PROGRAM_WRITE_EDITOR.search(window.window_text())
                 )
         except Exception as error:
+            classified = classify_automation_error(
+                error,
+                default_code=GXSyncErrorCode.GX_PROJECT_INSPECT_FAILED,
+                stage="inspect_project",
+                retryable=True,
+                message=f"无法读取GX Works2当前程序：{describe_exception(error)}",
+            )
             return {
                 "automation_available": False,
                 "project_open": bool(session.project_open),
                 "program_ready": False,
                 "project_name": session.project_name,
                 "read_csv_available": False,
-                "message": f"无法读取GX Works2当前程序：{error}",
+                "message": str(classified),
+                "error_code": classified.code,
+                "stage": classified.stage,
+                "retryable": classified.retryable,
+                **exception_details(classified),
             }
         project_open = bool(session.project_open or program_ready)
         return {
@@ -573,13 +605,36 @@ class PywinautoGXWorks2UIAutomation(GXWorks2UIAutomation):
                 return Desktop(backend="win32").window(handle=handle)
         return None
 
-    def _wait_legacy_dialog(self, session, title_pattern, timeout=None):
-        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
+    def _wait_legacy_dialog(
+        self,
+        session,
+        title_pattern,
+        timeout=None,
+        *,
+        failure_stage="",
+    ):
+        wait_seconds = self.timeout if timeout is None else float(timeout)
+        started_at = time.monotonic()
+        deadline = started_at + wait_seconds
         while time.monotonic() < deadline:
             dialog = self._legacy_dialog(session, title_pattern)
             if dialog is not None:
                 return dialog
             time.sleep(0.05)
+        if failure_stage:
+            elapsed = max(0.0, time.monotonic() - started_at)
+            timeout_error = TimeoutError()
+            raise GXAutomationError(
+                GXSyncErrorCode.GX_FILE_DIALOG_TIMEOUT,
+                failure_stage,
+                f"{elapsed:.1f}秒内未检测到GX Works2文件选择窗口。",
+                retryable=True,
+                original_error=timeout_error,
+                details={
+                    "timeout_seconds": wait_seconds,
+                    "elapsed_seconds": round(elapsed, 3),
+                },
+            )
         raise RuntimeError("未检测到GX Works2文件选择对话框")
 
     @staticmethod
@@ -694,22 +749,89 @@ class PywinautoGXWorks2UIAutomation(GXWorks2UIAutomation):
         *,
         accelerator,
         confirm_before_file=False,
+        operation="",
     ):
-        window = self._main_window(session)
-        self._send_edit_accelerator(window, accelerator)
+        export_code = (
+            GXSyncErrorCode.GX_COMMENT_EXPORT_FAILED
+            if operation == "comment_export"
+            else GXSyncErrorCode.GX_PROGRAM_EXPORT_FAILED
+        )
+        file_dialog_stage = (
+            "wait_comment_file_dialog"
+            if operation == "comment_export"
+            else "wait_program_file_dialog"
+        )
+        submit_stage = (
+            "submit_comment_export_path"
+            if operation == "comment_export"
+            else "submit_program_export_path"
+        )
+        operation_label = "注释" if operation == "comment_export" else "程序"
+        try:
+            window = self._main_window(session)
+            if operation:
+                self._report_progress(
+                    "open_export_menu",
+                    f"正在打开GX Works2{operation_label}CSV导出命令",
+                )
+            self._send_edit_accelerator(window, accelerator)
+        except GXAutomationError:
+            raise
+        except Exception as error:
+            if not operation:
+                raise
+            raise classify_automation_error(
+                error,
+                default_code=GXSyncErrorCode.GX_EXPORT_MENU_FAILED,
+                stage="open_export_menu",
+                retryable=True,
+                message=(
+                    f"无法打开GX Works2{operation_label}CSV导出菜单："
+                    f"{describe_exception(error)}"
+                ),
+                details={"operation": operation},
+            ) from error
         if confirm_before_file:
             try:
                 self._wait_confirmation_and_accept(session, "写入", timeout=1.5)
-            except RuntimeError:
-                window.type_keys("{ESC}")
-                command = self._csv_command(window, pattern)
-                if command is None:
-                    raise RuntimeError("当前编辑器没有对应CSV命令")
-                command.invoke()
-                self._wait_confirmation_and_accept(session, "写入")
+            except RuntimeError as initial_error:
+                try:
+                    window.type_keys("{ESC}")
+                    command = self._csv_command(window, pattern)
+                    if command is None:
+                        raise GXAutomationError(
+                            GXSyncErrorCode.GX_EXPORT_MENU_FAILED,
+                            "open_export_menu",
+                            "当前编辑器没有可用的“写入至CSV文件”命令。",
+                            retryable=True,
+                            original_error=initial_error,
+                            details={"operation": operation},
+                        )
+                    command.invoke()
+                    self._wait_confirmation_and_accept(session, "写入")
+                except GXAutomationError:
+                    raise
+                except Exception as error:
+                    raise classify_automation_error(
+                        error,
+                        default_code=GXSyncErrorCode.GX_EXPORT_MENU_FAILED,
+                        stage="open_export_menu",
+                        retryable=True,
+                        message=(
+                            f"GX Works2未打开{operation_label}CSV导出命令："
+                            f"{describe_exception(error)}"
+                        ),
+                        details={"operation": operation},
+                    ) from error
+            if operation:
+                self._report_progress(
+                    file_dialog_stage,
+                    f"正在等待GX Works2{operation_label}文件选择窗口",
+                )
             dialog = self._wait_legacy_dialog(
                 session,
                 re.compile(r"打开|保存|CSV|Open|Save", re.I),
+                failure_stage=file_dialog_stage if operation else "",
             )
         else:
             try:
@@ -728,13 +850,58 @@ class PywinautoGXWorks2UIAutomation(GXWorks2UIAutomation):
                     session,
                     re.compile(r"打开|保存|CSV|Open|Save", re.I),
                 )
-        self._set_legacy_file_name(dialog, path)
+        if operation:
+            self._report_progress(
+                submit_stage,
+                f"正在提交GX Works2{operation_label}CSV导出路径",
+            )
+        try:
+            self._set_legacy_file_name(dialog, path)
+        except Exception as error:
+            if not operation:
+                raise
+            raise classify_automation_error(
+                error,
+                default_code=export_code,
+                stage=submit_stage,
+                retryable=True,
+                message=(
+                    f"无法向GX Works2提交{operation_label}CSV导出路径："
+                    f"{describe_exception(error)}"
+                ),
+                details={"operation": operation},
+            ) from error
         if not confirm_before_file:
             self._wait_confirmation_and_accept(session, "读取")
-        return self._wait_operation_result(
-            session,
-            destination=path if confirm_before_file else None,
+        result_stage = (
+            "wait_comment_export_file"
+            if operation == "comment_export"
+            else "wait_program_export_file"
         )
+        if operation:
+            self._report_progress(
+                result_stage,
+                f"正在等待GX Works2生成{operation_label}CSV",
+            )
+        try:
+            return self._wait_operation_result(
+                session,
+                destination=path if confirm_before_file else None,
+            )
+        except Exception as error:
+            if not operation:
+                raise
+            raise classify_automation_error(
+                error,
+                default_code=export_code,
+                stage=result_stage,
+                retryable=True,
+                message=(
+                    f"等待GX Works2生成{operation_label}CSV时失败："
+                    f"{describe_exception(error)}"
+                ),
+                details={"operation": operation},
+            ) from error
 
     def _wait_operation_result(self, session, destination=None):
         started_at = time.monotonic()
@@ -872,19 +1039,106 @@ class PywinautoGXWorks2UIAutomation(GXWorks2UIAutomation):
                 return True
         return False
 
+    def prepare_export_retry(self, session):
+        """Dismiss only CSV-related transient UI, then reactivate MAIN."""
+
+        dismissed = []
+        if os.name == "nt":
+            user32 = ctypes.windll.user32
+            transient_pattern = re.compile(
+                r"CSV|写入|读取|导出|打开|保存|另存为|Open|Save|Write|Read",
+                re.I,
+            )
+            for handle in self._native_dialog_handles(session):
+                text = self._native_dialog_text(handle)
+                if not (
+                    transient_pattern.search(text)
+                    or self.CONFIRMATION_TEXT.search(text)
+                ):
+                    continue
+                title = self._native_window_title(handle)
+                # WM_COMMAND/IDCANCEL is the native equivalent of pressing
+                # Escape in a common file or confirmation dialog.  Never send
+                # it to the GX Works2 frame itself.
+                user32.PostMessageW(int(handle), 0x0111, 2, 0)
+                dismissed.append(title or text[:120])
+
+        if dismissed:
+            time.sleep(0.05)
+
+        try:
+            window = self._main_window(session)
+            window.set_focus()
+            window.type_keys("{ESC}")
+            self._activate_program_editor(session)
+        except GXAutomationError:
+            raise
+        except Exception as error:
+            raise classify_automation_error(
+                error,
+                default_code=GXSyncErrorCode.GX_MAIN_ACTIVATE_FAILED,
+                stage="activate_main",
+                retryable=True,
+                message=(
+                    "清理导出界面后无法重新激活MAIN："
+                    + describe_exception(error)
+                ),
+                details={"dismissed_dialogs": dismissed},
+            ) from error
+        return {
+            "dismissed_dialogs": dismissed,
+            "main_activated": True,
+        }
+
     def export_current_program(self, session, destination):
-        self._activate_program_editor(session)
-        result = self._invoke_csv_command(
-            session,
-            self.WRITE_CSV_ITEM,
-            destination,
-            accelerator=self.PROGRAM_WRITE_KEY,
-            confirm_before_file=True,
-        )
+        self._report_progress("activate_main", "正在激活GX Works2 MAIN程序")
+        try:
+            self._activate_program_editor(session)
+        except GXAutomationError:
+            raise
+        except Exception as error:
+            raise classify_automation_error(
+                error,
+                default_code=GXSyncErrorCode.GX_MAIN_ACTIVATE_FAILED,
+                stage="activate_main",
+                retryable=True,
+                message="无法激活GX Works2 MAIN程序：" + describe_exception(error),
+            ) from error
+        try:
+            result = self._invoke_csv_command(
+                session,
+                self.WRITE_CSV_ITEM,
+                destination,
+                accelerator=self.PROGRAM_WRITE_KEY,
+                confirm_before_file=True,
+                operation="program_export",
+            )
+        except GXAutomationError:
+            raise
+        except Exception as error:
+            raise classify_automation_error(
+                error,
+                default_code=GXSyncErrorCode.GX_PROGRAM_EXPORT_FAILED,
+                stage="export_program",
+                retryable=True,
+                message="GX Works2程序CSV导出失败：" + describe_exception(error),
+            ) from error
         if not result.get("success"):
-            raise RuntimeError(result.get("message") or "GX Works2备份写出失败")
+            raise GXAutomationError(
+                GXSyncErrorCode.GX_PROGRAM_EXPORT_FAILED,
+                "wait_program_export_file",
+                result.get("message") or "GX Works2程序CSV写出失败。",
+                retryable=True,
+                details={"gxworks2_result": dict(result)},
+            )
         if not Path(destination).is_file():
-            raise RuntimeError("GX Works2未生成备份CSV")
+            raise GXAutomationError(
+                GXSyncErrorCode.GX_PROGRAM_EXPORT_FAILED,
+                "wait_program_export_file",
+                "GX Works2未生成程序CSV。",
+                retryable=True,
+                details={"export_path": str(Path(destination).resolve())},
+            )
 
     def import_program_csv(self, session, csv_path):
         self._ensure_program_writable(session)
@@ -896,18 +1150,54 @@ class PywinautoGXWorks2UIAutomation(GXWorks2UIAutomation):
         )
 
     def export_current_comments(self, session, destination):
-        self._activate_comments_editor(session)
-        result = self._invoke_csv_command(
-            session,
-            self.WRITE_CSV_ITEM,
-            destination,
-            accelerator=self.COMMENT_WRITE_KEY,
-            confirm_before_file=True,
-        )
+        self._report_progress("activate_comments", "正在打开GX Works2软元件注释")
+        try:
+            self._activate_comments_editor(session)
+        except GXAutomationError:
+            raise
+        except Exception as error:
+            raise classify_automation_error(
+                error,
+                default_code=GXSyncErrorCode.GX_COMMENT_EXPORT_FAILED,
+                stage="activate_comments",
+                retryable=True,
+                message="无法激活GX Works2软元件注释：" + describe_exception(error),
+            ) from error
+        try:
+            result = self._invoke_csv_command(
+                session,
+                self.WRITE_CSV_ITEM,
+                destination,
+                accelerator=self.COMMENT_WRITE_KEY,
+                confirm_before_file=True,
+                operation="comment_export",
+            )
+        except GXAutomationError:
+            raise
+        except Exception as error:
+            raise classify_automation_error(
+                error,
+                default_code=GXSyncErrorCode.GX_COMMENT_EXPORT_FAILED,
+                stage="export_comments",
+                retryable=True,
+                message="GX Works2注释CSV导出失败：" + describe_exception(error),
+            ) from error
         if not result.get("success"):
-            raise RuntimeError(result.get("message") or "GX Works2注释备份写出失败")
+            raise GXAutomationError(
+                GXSyncErrorCode.GX_COMMENT_EXPORT_FAILED,
+                "wait_comment_export_file",
+                result.get("message") or "GX Works2注释CSV写出失败。",
+                retryable=True,
+                details={"gxworks2_result": dict(result)},
+            )
         if not Path(destination).is_file():
-            raise RuntimeError("GX Works2未生成软元件注释备份CSV")
+            raise GXAutomationError(
+                GXSyncErrorCode.GX_COMMENT_EXPORT_FAILED,
+                "wait_comment_export_file",
+                "GX Works2未生成软元件注释CSV。",
+                retryable=True,
+                details={"export_path": str(Path(destination).resolve())},
+            )
 
     def import_comments_csv(self, session, csv_path):
         self._activate_comments_editor(session)

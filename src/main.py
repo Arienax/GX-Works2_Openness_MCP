@@ -836,18 +836,203 @@ class GXWorks2SyncInspectThread(QThread):
                 import_context=self.import_context,
             )
         except Exception as error:
-            from gxworks2.models import ImportErrorCode, SyncResult, SyncStatus
+            from gxworks2.diagnostics import describe_exception, exception_details
+            from gxworks2.models import GXSyncErrorCode, SyncResult, SyncStatus
 
             result = SyncResult(
                 False,
                 SyncStatus.ERROR,
-                f"GX Works2同步检查异常：{error}",
-                ImportErrorCode.AUTOMATION_FAILED,
+                "GX Works2同步检查异常：" + describe_exception(error),
+                GXSyncErrorCode.GX_UNEXPECTED_ERROR,
+                details={
+                    "category": "precheck",
+                    "stage": "unexpected",
+                    "error_code": GXSyncErrorCode.GX_UNEXPECTED_ERROR.value,
+                    "retryable": False,
+                    "suggestion": "请查看技术详情；若问题持续出现，请保留详情用于排查。",
+                    "gx_running": None,
+                    "gx_process_id": None,
+                    "gx_window_handle": None,
+                    "project_open": None,
+                    "program_ready": None,
+                    "program_name": str(
+                        self.import_context.get("program_name") or "MAIN"
+                    ),
+                    "attempt": 1,
+                    "max_attempts": 1,
+                    "attempts": [],
+                    "program_path": self.program_csv_path,
+                    "comment_path": self.comment_csv_path,
+                    **exception_details(error),
+                },
+                stage="unexpected",
+                retryable=False,
             )
         finally:
             if pythoncom is not None:
                 pythoncom.CoUninitialize()
         self.completed.emit(result)
+
+
+class GXWorks2SyncErrorDialog(QDialog):
+    """Structured, expandable diagnostics for a failed read-side sync."""
+
+    STAGE_LABELS = {
+        "validate_local": "当前项目CSV校验",
+        "check_gxworks2": "检查GX Works2",
+        "retry_check_gxworks2": "重试前检查GX Works2",
+        "check_project": "检查GX Works2工程",
+        "check_program": "检查MAIN程序",
+        "inspect_project": "检查GX Works2工程状态",
+        "retry_inspect_project": "重试前检查工程状态",
+        "activate_main": "激活MAIN程序",
+        "activate_comments": "打开软元件注释",
+        "open_export_menu": "打开“写入至CSV文件”",
+        "wait_program_file_dialog": "等待程序文件选择窗口",
+        "wait_comment_file_dialog": "等待注释文件选择窗口",
+        "submit_program_export_path": "提交程序CSV导出路径",
+        "submit_comment_export_path": "提交注释CSV导出路径",
+        "wait_program_export_file": "等待程序CSV生成",
+        "wait_comment_export_file": "等待注释CSV生成",
+        "export_program": "程序CSV导出",
+        "validate_program_csv": "校验程序CSV",
+        "export_comments": "注释CSV导出",
+        "validate_comment_csv": "校验注释CSV",
+        "write_manifest": "保存导出校验清单",
+        "resolve_baseline": "确定同步基线",
+        "compare": "读取并比较同步基线",
+        "save_baseline": "保存同步基线",
+        "unexpected": "同步服务内部处理",
+    }
+
+    def __init__(self, result, parent=None):
+        super().__init__(parent)
+        self.result = result
+        self.retry_requested = False
+        self.setWindowTitle("GX Works2同步未完成")
+        self.setModal(True)
+        self.setMinimumWidth(560)
+        dialog_font = QFont("Microsoft YaHei")
+        dialog_font.setPointSize(10)
+        self.setFont(dialog_font)
+
+        details = dict(getattr(result, "details", {}) or {})
+        stage = str(getattr(result, "stage", "") or details.get("stage") or "")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        headline = QLabel("⚠ " + self._headline(result, details))
+        headline.setObjectName("GXSyncErrorHeadline")
+        headline.setStyleSheet("font-size: 17px; font-weight: 600;")
+        layout.addWidget(headline)
+
+        stage_label = QLabel(
+            "阶段\n" + self.STAGE_LABELS.get(stage, stage or "未知阶段")
+        )
+        stage_label.setWordWrap(True)
+        layout.addWidget(stage_label)
+
+        reason = naturalize_display_text(getattr(result, "message", ""))
+        if reason:
+            reason_label = QLabel("原因\n" + reason)
+            reason_label.setWordWrap(True)
+            layout.addWidget(reason_label)
+
+        checks_label = QLabel("检测结果\n" + self._checks_text(details, stage))
+        checks_label.setWordWrap(True)
+        layout.addWidget(checks_label)
+
+        suggestion = naturalize_display_text(
+            details.get("suggestion") or "请查看技术详情后重试。"
+        )
+        suggestion_label = QLabel("建议\n" + suggestion)
+        suggestion_label.setWordWrap(True)
+        layout.addWidget(suggestion_label)
+
+        self.details_editor = QPlainTextEdit(self)
+        self.details_editor.setReadOnly(True)
+        self.details_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.details_editor.setPlainText(
+            json.dumps(result.to_dict(), ensure_ascii=False, indent=2, default=str)
+        )
+        self.details_editor.setMinimumHeight(220)
+        self.details_editor.setVisible(False)
+        layout.addWidget(self.details_editor)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        if bool(getattr(result, "retryable", False)):
+            self.retry_button = QPushButton("重试同步", self)
+            self.retry_button.clicked.connect(self._accept_retry)
+            buttons.addWidget(self.retry_button)
+        else:
+            self.retry_button = None
+        self.details_button = QPushButton("查看技术详情", self)
+        self.details_button.clicked.connect(self._toggle_details)
+        buttons.addWidget(self.details_button)
+        cancel_button = QPushButton("取消", self)
+        cancel_button.clicked.connect(self.reject)
+        buttons.addWidget(cancel_button)
+        layout.addLayout(buttons)
+
+    @staticmethod
+    def _status_line(label, value):
+        if value is True:
+            marker = "✓"
+        elif value is False:
+            marker = "✕"
+        else:
+            marker = "—"
+        return f"{marker} {label}"
+
+    @classmethod
+    def _checks_text(cls, details, stage):
+        lines = [
+            cls._status_line(
+                "GX Works2正在运行",
+                details.get("gx_running"),
+            ),
+            cls._status_line("工程已打开", details.get("project_open")),
+            cls._status_line("MAIN已打开", details.get("program_ready")),
+        ]
+        comment_stage = (
+            "comment" in stage or details.get("operation") == "comment_export"
+        )
+        if stage in {"write_manifest", "compare", "save_baseline"}:
+            lines.append(cls._status_line("程序CSV已导出并校验", True))
+            lines.append(cls._status_line("注释CSV已导出并校验", True))
+        elif comment_stage:
+            lines.append(cls._status_line("程序CSV已导出并校验", True))
+            lines.append(cls._status_line("注释CSV已导出并校验", False))
+        elif any(
+            token in stage
+            for token in ("program", "export_menu", "file_dialog", "activate_main")
+        ):
+            lines.append(cls._status_line("程序CSV已导出并校验", False))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _headline(result, details):
+        stage = str(getattr(result, "stage", "") or details.get("stage") or "")
+        if "comment" in stage or details.get("operation") == "comment_export":
+            return "读取软元件注释失败"
+        if any(
+            token in stage
+            for token in ("program", "export_menu", "file_dialog", "activate_main")
+        ):
+            return "读取MAIN失败"
+        return naturalize_display_text(result.message) or "GX Works2同步未完成"
+
+    def _toggle_details(self):
+        visible = self.details_editor.isHidden()
+        self.details_editor.setVisible(visible)
+        self.details_button.setText("收起技术详情" if visible else "查看技术详情")
+        self.adjustSize()
+
+    def _accept_retry(self):
+        self.retry_requested = True
+        self.accept()
 
 
 class GXWorks2PullThread(QThread):
@@ -4346,6 +4531,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self._gxworks2_pull_thread = None
         self._pending_gx_sync_result = None
         self._gx_sync_request = None
+        self._gx_sync_retry_pending = False
         self._pending_gx_pull = None
         self._simulator_test_plan_thread = None
         self._simulator_test_execute_thread = None
@@ -8279,9 +8465,26 @@ class _IndustrialWorkbenchUI(QMainWindow):
     def _gxworks2_sync_progress(self, stage, message):
         labels = {
             "validate": "正在校验…",
+            "validate_local": "正在校验…",
+            "check_gxworks2": "检查GX进程…",
             "check_project": "检查GX工程…",
+            "check_program": "检查MAIN…",
+            "inspect_project": "读取GX状态…",
+            "activate_main": "激活MAIN…",
+            "activate_comments": "打开注释…",
+            "open_export_menu": "打开导出命令…",
+            "wait_program_file_dialog": "等待程序窗口…",
+            "wait_comment_file_dialog": "等待注释窗口…",
+            "submit_program_export_path": "提交程序路径…",
+            "submit_comment_export_path": "提交注释路径…",
+            "wait_program_export_file": "等待程序CSV…",
+            "wait_comment_export_file": "等待注释CSV…",
             "export_program": "读取MAIN…",
+            "validate_program_csv": "校验MAIN…",
             "export_comments": "读取注释…",
+            "validate_comment_csv": "校验注释…",
+            "write_manifest": "保存校验信息…",
+            "retry_export": "正在安全重试…",
             "compare": "比较版本…",
         }
         self.gxworks2_import_button.setText(labels.get(stage, "正在同步…"))
@@ -8360,11 +8563,14 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self.showNormal()
             self.raise_()
             self.activateWindow()
-            QMessageBox.warning(
-                self,
-                "GX Works2同步未完成",
-                naturalize_display_text(result.message),
-            )
+            dialog = GXWorks2SyncErrorDialog(result, self)
+            dialog.exec()
+            if dialog.retry_requested:
+                self._gx_sync_retry_pending = True
+                self.gxworks2_import_button.setEnabled(False)
+                self.gxworks2_import_button.setText("准备重试…")
+                if self._gxworks2_sync_thread is None:
+                    QTimer.singleShot(0, self._run_pending_gx_sync_retry)
             return
         status = result.status.value
         if status == "synced":
@@ -8402,8 +8608,19 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self._resolve_gxworks2_conflict(result, request)
 
     def _gxworks2_sync_thread_finished(self):
+        if self._gx_sync_retry_pending:
+            self.gxworks2_import_button.setEnabled(False)
+            self.gxworks2_import_button.setText("准备重试…")
+            QTimer.singleShot(0, self._run_pending_gx_sync_retry)
+            return
         self.gxworks2_import_button.setText("同步 GX Works2")
         self._update_gx_sync_button_enabled()
+
+    def _run_pending_gx_sync_retry(self):
+        if not self._gx_sync_retry_pending or self._gx_sync_busy():
+            return
+        self._gx_sync_retry_pending = False
+        self._sync_current_version_with_gxworks2()
 
     def _start_gxworks2_pull(self, result, request):
         if self._gxworks2_pull_thread is not None:
