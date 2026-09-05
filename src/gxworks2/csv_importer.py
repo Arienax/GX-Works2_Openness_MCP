@@ -604,14 +604,24 @@ def materialize_gxworks2_version(
     from plc_timing import TIMING_ANALYSIS_SCHEMA_VERSION
 
     selected_model = str(plc_model or "FX3U").strip().upper()
-    validate_ladder_full(parsed.ladder, plc_model=selected_model)
+    # Native GX exports are trusted as the source of spelling, not as proof of
+    # semantics.  Catalogue misses are therefore preserved for round-trip but
+    # remain unavailable to strict Agent generation/repair paths.
+    validate_ladder_full(
+        parsed.ladder,
+        plc_model=selected_model,
+        require_catalogued_instructions=False,
+    )
     program_ir = build_plc_ir(
         parsed.ladder,
         plc_model=selected_model,
         program_name=program_name or parsed.program_name,
         revision=revision,
     )
-    validate_plc_ir(program_ir)
+    validate_plc_ir(
+        program_ir,
+        require_catalogued_instructions=False,
+    )
     rendered_ladder = ir_to_ladder(program_ir)
 
     destination = Path(output_dir).expanduser().resolve()
