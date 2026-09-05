@@ -1,0 +1,76 @@
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from qt_compat import QApplication
+from workbench_widgets import RequirementReviewCard, SpecificationWorkbenchDialog
+
+
+def _app():
+    return QApplication.instance() or QApplication([])
+
+
+def _analysis():
+    return {
+        "plc_model": "FX3U",
+        "summary": "X0 启动 Y0，并确认启动保持方式。",
+        "approaches": [
+            {
+                "name": "自保持控制",
+                "description": "使用常规自保持回路。",
+                "generation_contract": {
+                    "required_structures": ["self_hold"],
+                },
+            }
+        ],
+        "missing_info": [
+            {
+                "id": "stop_mode",
+                "question": "停止方式",
+                "options": ["X1 常闭停止", "软件停止"],
+                "required": True,
+            }
+        ],
+        "suggested_io": {
+            "X": {"X0": "启动按钮", "X1": "停止按钮"},
+            "Y": {"Y0": "运行输出"},
+        },
+    }
+
+
+def test_requirement_review_is_compact_summary_card():
+    _app()
+    card = RequirementReviewCard(_analysis(), "做一个启停控制", plc_model="FX3U")
+    assert card.objectName() == "SpecSummaryCard"
+    assert card.open_button.text() == "打开规格工作台"
+    assert "FX3U" in card.summary.text()
+
+
+def test_specification_workbench_has_requested_three_column_layout():
+    _app()
+    dialog = SpecificationWorkbenchDialog(
+        _analysis(),
+        "做一个启停控制",
+        previous_spec=None,
+        plc_model="FX3U",
+    )
+    assert dialog.minimumWidth() >= 1000
+    assert dialog.minimumHeight() >= 700
+    assert dialog.nav.count() == 5
+    assert dialog.stack.count() == 5
+    assert [dialog.nav.item(i).text() for i in range(dialog.nav.count())] == [
+        "概览",
+        "实现方案",
+        "控制参数",
+        "I/O 映射",
+        "高级约束",
+    ]
+    assert dialog.validation_summary.objectName() == "SpecValidationSummary"
+    assert dialog.confirm_button.text() == "确认并生成"
+    dialog.close()
+
+
+def test_pyinstaller_specs_keep_legacy_editor_as_runtime_data():
+    for path in ("main.spec", "main_win7.spec"):
+        text = open(path, "r", encoding="utf-8").read()
+        assert "('src/workbench_widgets.py', '.')" in text
