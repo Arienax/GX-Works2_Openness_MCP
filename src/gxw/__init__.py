@@ -1,5 +1,11 @@
 """Experimental read-only GX Works2 .gxw parser."""
 
+from .connectivity import (
+    ConnectivityGraph,
+    ConnectivityNet,
+    PortRef,
+    build_connectivity_graph,
+)
 from .models import (
     GXWFormatError,
     NodeKind,
@@ -27,15 +33,19 @@ def describe_program(*args, **kwargs):
 
 
 __all__ = [
+    "ConnectivityGraph",
+    "ConnectivityNet",
     "GXWFormatError",
     "GXWProjectResolver",
     "NodeKind",
     "Point",
     "PortDescriptor",
+    "PortRef",
     "Rect",
     "StructuredNode",
     "StructuredProgram",
     "StructuredWire",
+    "build_connectivity_graph",
     "describe_program",
     "parse_structured_pou",
     "read_structured_program",

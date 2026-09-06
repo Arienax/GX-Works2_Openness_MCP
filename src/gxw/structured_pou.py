@@ -81,7 +81,9 @@ def _parse_node(record: bytes, absolute_offset: int) -> StructuredNode:
             raise GXWFormatError(
                 f"structured node port {port_index} is truncated at 0x{absolute_offset:X}"
             )
-        size, field_a, field_b, field_c = struct.unpack_from("<IIII", record, cursor)
+        size, port_kind_code, local_x, local_y = struct.unpack_from(
+            "<IIII", record, cursor
+        )
         if size != 16:
             raise GXWFormatError(
                 f"unexpected structured port size {size} at 0x{absolute_offset + cursor:X}"
@@ -90,9 +92,9 @@ def _parse_node(record: bytes, absolute_offset: int) -> StructuredNode:
         ports.append(
             PortDescriptor(
                 size=size,
-                field_a=field_a,
-                field_b=field_b,
-                field_c=field_c,
+                port_kind_code=port_kind_code,
+                local_x=local_x,
+                local_y=local_y,
                 raw=raw_port,
             )
         )

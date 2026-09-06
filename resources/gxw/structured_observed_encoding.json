@@ -1,18 +1,19 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "experimental",
   "scope": {
     "software": "GX Works2",
     "plc_family": "FX3U",
     "language": "Structured Ladder/FBD",
-    "samples": [48, 49, 50, 51, 52, 53],
+    "samples": [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58],
     "date": "2026-09-06"
   },
   "warnings": [
     "Numeric _hdb stream IDs are project-specific; resolve them through projectdatalist.xml.",
     "Offsets and record layouts are verified only for the controlled samples listed here.",
     "MAIN.res may be stale after source edits unless GX Works2 recompiles; prefer current *.Program.pou for source parsing.",
-    "This registry is read-only research and must not be used as evidence that direct GXW writing is safe."
+    "port_kind_code values are observed but their exact Mitsubishi semantics remain unknown.",
+    "Connectivity rules are read-only reconstruction findings and must not be treated as evidence that direct GXW writing is safe."
   ],
   "project": {
     "outer_container": "CFB/OLE",
@@ -27,15 +28,19 @@
   },
   "structured_program_pou": {
     "records_offset_hex": "0x5F",
+    "size_like_offsets_hex": ["0x37", "0x3B"],
+    "size_like_observed_relation": "body_size + 12",
     "body_size_offset_hex": "0x47",
     "body_size_relation": "file_size - 0x5F",
     "canvas_height_offset_hex": "0x57",
+    "canvas_height_observation": "equals left power-rail end_y in tested graphs, including samples 56-58",
     "record_count_offset_hex": "0x5B",
     "trailer_zero_bytes": 24,
     "record_classes": {
       "1": "node",
       "2": "wire"
-    }
+    },
+    "junction_record_observed": false
   },
   "node_record": {
     "fields": [
@@ -65,11 +70,27 @@
       "size_bytes": 16,
       "fields": [
         "uint32 size=16",
-        "uint32 field_a",
-        "uint32 field_b",
-        "uint32 field_c"
+        "uint32 port_kind_code",
+        "uint32 local_x",
+        "uint32 local_y"
       ],
-      "semantic_status": "unknown"
+      "absolute_point_relation": [
+        "absolute_x = node.left + local_x",
+        "absolute_y = node.top + local_y"
+      ],
+      "semantic_status": {
+        "local_x": "verified by samples 53-55",
+        "local_y": "verified by samples 53-55",
+        "port_kind_code": "observed_role_code_exact_semantics_unknown"
+      },
+      "observed_port_kind_codes": {
+        "0": ["coil right", "MOV ENO"],
+        "2": ["contact right", "MOV d", "input/value node right"],
+        "3": ["contact left", "coil left", "MOV EN", "MOV s", "output/value node left"]
+      },
+      "rejected_hypotheses": [
+        "port_kind_code is connected/unconnected state: sample 54 connects MOV ENO while its code remains 0"
+      ]
     }
   },
   "wire_record": {
@@ -82,7 +103,24 @@
       "end_y": "0x24"
     },
     "suffix_offset_hex": "0x28",
-    "prefix_semantics": "unknown_preserve_raw"
+    "observed_prefix_fields": [0, 1, 0, 1, 0],
+    "observed_suffix": 0,
+    "prefix_semantics": "unknown_preserve_raw",
+    "topology_observation": "samples 56-58 keep the same prefix/suffix across T-junction, non-connecting crossing, and connecting junction"
+  },
+  "connectivity": {
+    "status": "implemented_read_only",
+    "rules": [
+      "coincident port points connect",
+      "a port point on an explicit wire segment joins that conductor",
+      "wire endpoint to wire endpoint connects",
+      "wire endpoint on another wire segment interior connects",
+      "wire interior crossing wire interior does not connect"
+    ],
+    "unsupported_geometry": [
+      "diagonal wires are rejected until observed in a controlled sample"
+    ],
+    "semantic_boundary": "ConnectivityGraph reconstructs conductive nets only; it does not connect through contact/coil/function node semantics."
   },
   "sample_52": {
     "logical_name": "1.Program.pou",
@@ -110,7 +148,72 @@
       {"kind": "contact", "symbol": "X1", "bbox": [6, 1, 8, 3], "ports": 2},
       {"kind": "input", "symbol": "10", "bbox": [20, 2, 22, 4], "ports": 1},
       {"kind": "output", "symbol": "D1", "bbox": [29, 2, 31, 4], "ports": 1}
+    ],
+    "coincident_connections": [
+      [["10", 0], ["MOV", 1], [22, 3]],
+      [["MOV", 3], ["D1", 0], [29, 3]]
     ]
+  },
+  "sample_54": {
+    "logical_name": "1.Program.pou",
+    "file_size": 653,
+    "body_size": 558,
+    "record_count": 8,
+    "canvas_height": 6,
+    "finding": "MOV ENO and Y1 left ports coincide at (29,2) with no extra wire; MOV ENO port_kind_code remains 0"
+  },
+  "sample_55": {
+    "logical_name": "1.Program.pou",
+    "file_size": 661,
+    "body_size": 566,
+    "record_count": 9,
+    "canvas_height": 6,
+    "spaced_ports": {
+      "10.right": [11, 3],
+      "MOV.s": [22, 3],
+      "MOV.d": [29, 3],
+      "D1.left": [50, 3]
+    },
+    "added_wires": [
+      [11, 3, 22, 3],
+      [29, 3, 50, 3]
+    ]
+  },
+  "sample_56": {
+    "logical_name": "1.Program.pou",
+    "file_size": 623,
+    "body_size": 528,
+    "record_count": 9,
+    "canvas_height": 16,
+    "finding": "T/branch connectivity is represented by endpoint sharing and endpoint-on-segment geometry; no junction record"
+  },
+  "sample_57": {
+    "logical_name": "1.Program.pou",
+    "file_size": 711,
+    "body_size": 616,
+    "record_count": 11,
+    "canvas_height": 16,
+    "crossing_wires": [
+      [73, 4, 73, 7],
+      [71, 5, 75, 5]
+    ],
+    "intersection": [73, 5],
+    "connected": false,
+    "reason": "intersection is interior/interior"
+  },
+  "sample_58": {
+    "logical_name": "1.Program.pou",
+    "file_size": 711,
+    "body_size": 616,
+    "record_count": 11,
+    "canvas_height": 16,
+    "junction_wires": [
+      [71, 5, 75, 5],
+      [73, 5, 73, 8]
+    ],
+    "intersection": [73, 5],
+    "connected": true,
+    "reason": "vertical wire endpoint lies on horizontal wire interior"
   },
   "global_label_pair_48_49": {
     "direct_symbols": ["X1", "Y1"],

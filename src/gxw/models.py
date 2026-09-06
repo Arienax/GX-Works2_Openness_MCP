@@ -51,10 +51,29 @@ class Rect:
 @dataclass(frozen=True)
 class PortDescriptor:
     size: int
-    field_a: int
-    field_b: int
-    field_c: int
+    port_kind_code: int
+    local_x: int
+    local_y: int
     raw: bytes = field(repr=False)
+
+    def absolute_point(self, bbox: Rect) -> Point:
+        """Return the observed editor-grid point for this port."""
+        return Point(bbox.left + self.local_x, bbox.top + self.local_y)
+
+    # Compatibility aliases for early experimental callers. New code should use
+    # port_kind_code/local_x/local_y so the verified geometry is explicit while
+    # the still-unknown first semantic field remains neutrally named.
+    @property
+    def field_a(self) -> int:
+        return self.port_kind_code
+
+    @property
+    def field_b(self) -> int:
+        return self.local_x
+
+    @property
+    def field_c(self) -> int:
+        return self.local_y
 
 
 @dataclass(frozen=True)
@@ -69,6 +88,9 @@ class StructuredNode:
     object_flag: int
     reserved: int
     raw: bytes = field(repr=False)
+
+    def port_point(self, port_index: int) -> Point:
+        return self.ports[port_index].absolute_point(self.bbox)
 
 
 @dataclass(frozen=True)
