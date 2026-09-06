@@ -41,7 +41,9 @@ The current demo focuses on **FX3U + GX Works2**.
 > [!NOTE]
 > The repository already contains an MCP-shaped structured Tool Runtime, but the current release does **not yet expose a standalone MCP server** for external MCP clients. Standalone stdio / Streamable HTTP transport is under development.
 
-<!-- Add the project demo GIF here when available. -->
+<p align="center">
+  <img src="resources/assets/demo.gif" alt="GX Works2 Openness MCP demo" width="1200">
+</p>
 
 ---
 
