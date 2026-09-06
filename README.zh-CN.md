@@ -41,7 +41,9 @@ GX Simulator2
 > [!NOTE]
 > 当前仓库已经包含 MCP 风格的结构化 Tool Runtime，但当前版本**尚未向外部 MCP Client 暴露独立的标准 MCP Server**。stdio / Streamable HTTP Transport 仍在开发中。
 
-<!-- Demo GIF 做好后放在这里。 -->
+<p align="center">
+  <img src="resources/assets/demo.gif" alt="GX Works2 Openness MCP 演示" width="1200">
+</p>
 
 ---
 
