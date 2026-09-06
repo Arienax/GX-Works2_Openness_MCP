@@ -17,6 +17,20 @@ from .models import (
     StructuredWire,
 )
 from .project_resolver import GXWProjectResolver
+from .semantic import (
+    DEFAULT_FUNCTION_FAMILY_REGISTRY,
+    FunctionFamilySpec,
+    SemanticFunction,
+    SemanticFunctionPort,
+    SemanticIssue,
+    SemanticIssueSeverity,
+    SemanticPortRole,
+    SemanticTerminal,
+    StructuredSemanticModel,
+    TerminalRole,
+    UnmodeledNodeRef,
+    build_semantic_model,
+)
 from .structured_pou import parse_structured_pou
 
 
@@ -35,6 +49,8 @@ def describe_program(*args, **kwargs):
 __all__ = [
     "ConnectivityGraph",
     "ConnectivityNet",
+    "DEFAULT_FUNCTION_FAMILY_REGISTRY",
+    "FunctionFamilySpec",
     "GXWFormatError",
     "GXWProjectResolver",
     "NodeKind",
@@ -42,10 +58,20 @@ __all__ = [
     "PortDescriptor",
     "PortRef",
     "Rect",
+    "SemanticFunction",
+    "SemanticFunctionPort",
+    "SemanticIssue",
+    "SemanticIssueSeverity",
+    "SemanticPortRole",
+    "SemanticTerminal",
     "StructuredNode",
     "StructuredProgram",
+    "StructuredSemanticModel",
     "StructuredWire",
+    "TerminalRole",
+    "UnmodeledNodeRef",
     "build_connectivity_graph",
+    "build_semantic_model",
     "describe_program",
     "parse_structured_pou",
     "read_structured_program",
