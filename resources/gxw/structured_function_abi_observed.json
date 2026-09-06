@@ -1,11 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "experimental",
   "scope": {
     "software": "GX Works2",
     "plc_family": "FX3U",
     "language": "Structured Ladder/FBD",
-    "samples": [59, 60, 61, 62, 63, 64, 65, 66],
+    "samples": [59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71],
     "date": "2026-09-06"
   },
   "function_abi": {
@@ -20,19 +20,40 @@
       "0": "role_like_but_not_fully_resolved"
     },
     "patterns": {
+      "ABS": [3, 2],
+      "ABS_E": [3, 3, 0, 2],
       "ADD_E-2": [3, 3, 3, 0, 2],
+      "ADD_E-3": [3, 3, 3, 3, 0, 2],
+      "AND_E-2": [3, 3, 3, 0, 2],
+      "AND_E-3": [3, 3, 3, 3, 0, 2],
       "CMP": [3, 3, 3, 0, 2],
-      "ADD_E-3": [3, 3, 3, 3, 0, 2]
+      "DIV_E": [3, 3, 3, 0, 2]
     }
   },
   "variadic_function_encoding": {
-    "family": "ADD_E",
-    "observed_symbols": {
-      "two_inputs": "ADD_E-2",
-      "three_inputs": "ADD_E-3"
+    "observed_extensible_families": {
+      "ADD_E": {
+        "two_inputs": "ADD_E-2",
+        "three_inputs": "ADD_E-3"
+      },
+      "AND_E": {
+        "two_inputs": "AND_E-2",
+        "three_inputs": "AND_E-3"
+      }
     },
-    "working_hypothesis": "suffix -N equals number of visible data IN ports for this function family",
-    "generalization_status": "not_yet_proven_for_other_families"
+    "fixed_arity_counterexample": {
+      "symbol": "DIV_E",
+      "data_input_count": 2,
+      "finding": "fixed two-input function does not serialize as DIV_E-2"
+    },
+    "working_hypothesis": "suffix -N is instantiated data-input arity for extensible function families",
+    "generalization_status": "cross_family_supported_for_ADD_E_AND_E_not_universal_to_fixed_functions"
+  },
+  "enable_interface": {
+    "controlled_pair": ["ABS", "ABS_E"],
+    "plain_pattern": [3, 2],
+    "enabled_pattern": [3, 3, 0, 2],
+    "working_hypothesis": "_E form adds EN/ENO execution interface while preserving the underlying data operation"
   },
   "terminal_node_roles": {
     "0x0D": {
@@ -54,12 +75,17 @@
     "finding": "GX Works2 serializes an unbound function input as a valid source/input terminal placeholder",
     "parser_policy": "accept in binary parser; report in later semantic validation"
   },
+  "header_observations": {
+    "size_like_offsets_hex": ["0x37", "0x3B"],
+    "relation": "body_size + 12",
+    "samples_confirming": [67, 68, 69, 70, 71],
+    "height_field_hex": "0x57",
+    "height_observation_67_71": "17, matching the left power-rail end_y in each tested diagram"
+  },
   "samples": {
     "59": {
       "function_symbol": "ADD_E-2",
       "function_port_codes": [3, 3, 3, 0, 2],
-      "record_count": 6,
-      "canvas_height": 16,
       "finding": "constants and X1 directly attached as 0x0D terminals; D1 as 0x0E"
     },
     "60": {
@@ -68,32 +94,63 @@
       "finding": "D0/D2 input terminals have same node role and geometry as constants in sample 59"
     },
     "61": {
-      "added_wires": [[6, 6, 12, 6], [18, 6, 24, 6], [6, 7, 12, 7]],
       "finding": "spaced ADD operands use explicit wires while preserving the same logical connections"
     },
     "62": {
       "eno_port_kind_code": 0,
-      "finding": "ADD_E ENO remains code 0 while connected to Y1 by coincident ports"
+      "finding": "ADD_E ENO remains code 0 while connected to Y1"
     },
     "63": {
       "function_symbol": "CMP",
       "function_port_codes": [3, 3, 3, 0, 2],
-      "finding": "CMP independently matches the ADD_E-2 five-port ABI pattern"
+      "finding": "CMP independently matches five-port ABI"
     },
     "64": {
       "placeholder_symbol": "?",
-      "finding": "accidental MOV.ENO -> ADD_E.ENO leaves ADD_E.EN represented by ? source terminal"
+      "finding": "unbound ADD_E.EN stored as ? source terminal"
     },
     "65": {
-      "control_wires": [[35, 5, 45, 5], [45, 5, 45, 11]],
-      "finding": "correct MOV.ENO -> ADD_E.EN uses ordinary geometric wires and removes ? placeholder"
+      "finding": "MOV.ENO -> ADD_E.EN uses ordinary geometric wires and removes ? placeholder"
     },
     "66": {
       "function_symbol": "ADD_E-3",
       "function_port_codes": [3, 3, 3, 3, 0, 2],
+      "finding": "third IN extends symbol suffix and port list"
+    },
+    "67": {
+      "function_symbol": "AND_E-2",
+      "function_port_codes": [3, 3, 3, 0, 2],
+      "record_count": 6,
+      "canvas_height": 17,
+      "finding": "AND_E-2 matches ADD_E-2 extensible ABI"
+    },
+    "68": {
+      "function_symbol": "AND_E-3",
+      "function_port_codes": [3, 3, 3, 3, 0, 2],
       "record_count": 7,
       "canvas_height": 17,
-      "finding": "third IN extends function symbol suffix, bbox height, port list, and diagram height"
+      "finding": "AND_E-3 adds one 16-byte Function port descriptor plus one 64-byte D4 input terminal"
+    },
+    "69": {
+      "function_symbol": "DIV_E",
+      "function_port_codes": [3, 3, 3, 0, 2],
+      "record_count": 6,
+      "canvas_height": 17,
+      "finding": "DIV_E has two data inputs but no -2 suffix, rejecting universal input-count suffix model"
+    },
+    "70": {
+      "function_symbol": "ABS",
+      "function_port_codes": [3, 2],
+      "record_count": 4,
+      "canvas_height": 17,
+      "finding": "plain ABS has only data IN/OUT ports"
+    },
+    "71": {
+      "function_symbol": "ABS_E",
+      "function_port_codes": [3, 3, 0, 2],
+      "record_count": 5,
+      "canvas_height": 17,
+      "finding": "ABS_E adds EN/ENO around the same data IN/OUT operation"
     }
   }
 }
