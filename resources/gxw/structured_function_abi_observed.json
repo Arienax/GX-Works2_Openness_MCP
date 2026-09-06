@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "status": "experimental",
+  "scope": {
+    "software": "GX Works2",
+    "plc_family": "FX3U",
+    "language": "Structured Ladder/FBD",
+    "samples": [59, 60, 61, 62, 63, 64, 65, 66],
+    "date": "2026-09-06"
+  },
+  "function_abi": {
+    "observed_port_kind_roles": {
+      "3": ["function EN", "function data input"],
+      "2": ["function ordinary result/output"],
+      "0": ["function ENO/execution-continuation-like output"]
+    },
+    "exact_semantics_status": {
+      "3": "strong_role_hypothesis",
+      "2": "strong_role_hypothesis",
+      "0": "role_like_but_not_fully_resolved"
+    },
+    "patterns": {
+      "ADD_E-2": [3, 3, 3, 0, 2],
+      "CMP": [3, 3, 3, 0, 2],
+      "ADD_E-3": [3, 3, 3, 3, 0, 2]
+    }
+  },
+  "variadic_function_encoding": {
+    "family": "ADD_E",
+    "observed_symbols": {
+      "two_inputs": "ADD_E-2",
+      "three_inputs": "ADD_E-3"
+    },
+    "working_hypothesis": "suffix -N equals number of visible data IN ports for this function family",
+    "generalization_status": "not_yet_proven_for_other_families"
+  },
+  "terminal_node_roles": {
+    "0x0D": {
+      "working_name": "source_input_terminal",
+      "port_kind_code": 2,
+      "observed_symbols": ["X1", "10", "20", "D0", "D2", "D4", "?"],
+      "meaning": "graph-role terminal feeding a function port; not a PLC device class"
+    },
+    "0x0E": {
+      "working_name": "sink_output_terminal",
+      "port_kind_code": 3,
+      "observed_symbols": ["D1", "D2", "D4", "D6", "M0", "Y1"],
+      "meaning": "graph-role terminal receiving a function result/ENO; not a PLC device class"
+    }
+  },
+  "unresolved_placeholder": {
+    "symbol": "?",
+    "node_kind": "0x0D",
+    "finding": "GX Works2 serializes an unbound function input as a valid source/input terminal placeholder",
+    "parser_policy": "accept in binary parser; report in later semantic validation"
+  },
+  "samples": {
+    "59": {
+      "function_symbol": "ADD_E-2",
+      "function_port_codes": [3, 3, 3, 0, 2],
+      "record_count": 6,
+      "canvas_height": 16,
+      "finding": "constants and X1 directly attached as 0x0D terminals; D1 as 0x0E"
+    },
+    "60": {
+      "function_symbol": "ADD_E-2",
+      "function_port_codes": [3, 3, 3, 0, 2],
+      "finding": "D0/D2 input terminals have same node role and geometry as constants in sample 59"
+    },
+    "61": {
+      "added_wires": [[6, 6, 12, 6], [18, 6, 24, 6], [6, 7, 12, 7]],
+      "finding": "spaced ADD operands use explicit wires while preserving the same logical connections"
+    },
+    "62": {
+      "eno_port_kind_code": 0,
+      "finding": "ADD_E ENO remains code 0 while connected to Y1 by coincident ports"
+    },
+    "63": {
+      "function_symbol": "CMP",
+      "function_port_codes": [3, 3, 3, 0, 2],
+      "finding": "CMP independently matches the ADD_E-2 five-port ABI pattern"
+    },
+    "64": {
+      "placeholder_symbol": "?",
+      "finding": "accidental MOV.ENO -> ADD_E.ENO leaves ADD_E.EN represented by ? source terminal"
+    },
+    "65": {
+      "control_wires": [[35, 5, 45, 5], [45, 5, 45, 11]],
+      "finding": "correct MOV.ENO -> ADD_E.EN uses ordinary geometric wires and removes ? placeholder"
+    },
+    "66": {
+      "function_symbol": "ADD_E-3",
+      "function_port_codes": [3, 3, 3, 3, 0, 2],
+      "record_count": 7,
+      "canvas_height": 17,
+      "finding": "third IN extends function symbol suffix, bbox height, port list, and diagram height"
+    }
+  }
+}
