@@ -857,41 +857,45 @@ def validate_ladder_against_selected_approach(ladder, confirmed_spec):
     return issues
 
 
-def format_contract_summary(approach):
+def format_contract_summary(approach, *, localized=False):
+    """Keep canonical values intact; opt in to translated presentation labels."""
+    from i18n import tr
+
+    label = tr if localized else str
     normalized = normalize_approach(approach)
     contract = normalized.get("generation_contract") or {}
     parts = []
     if contract.get("required_opcodes"):
         required_opcodes = [
             (
-                "OUT（用 COIL/TIMER/COUNTER 表示）"
+                label("OUT（用 COIL/TIMER/COUNTER 表示）")
                 if opcode == "OUT"
                 else opcode
             )
             for opcode in contract["required_opcodes"]
         ]
-        parts.append("必用指令 " + "/".join(required_opcodes))
+        parts.append(label("必用指令 ") + label("/").join(required_opcodes))
     if contract.get("forbidden_opcodes"):
-        parts.append("禁用指令 " + "/".join(contract["forbidden_opcodes"]))
+        parts.append(label("禁用指令 ") + label("/").join(contract["forbidden_opcodes"]))
     if contract.get("required_structures"):
         parts.append(
-            "必用结构 "
-            + "/".join(
-                STRUCTURE_LABELS.get(item, item)
+            label("必用结构 ")
+            + label("/").join(
+                label(STRUCTURE_LABELS[item]) if item in STRUCTURE_LABELS else item
                 for item in contract["required_structures"]
             )
         )
     if contract.get("forbidden_structures"):
         parts.append(
-            "禁用结构 "
-            + "/".join(
-                STRUCTURE_LABELS.get(item, item)
+            label("禁用结构 ")
+            + label("/").join(
+                label(STRUCTURE_LABELS[item]) if item in STRUCTURE_LABELS else item
                 for item in contract["forbidden_structures"]
             )
         )
     if contract.get("required_devices"):
-        parts.append("指定软元件 " + "/".join(contract["required_devices"]))
-    return "；".join(parts)
+        parts.append(label("指定软元件 ") + label("/").join(contract["required_devices"]))
+    return label("；").join(parts)
 
 
 __all__ = [

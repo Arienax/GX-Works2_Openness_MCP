@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from i18n import tr
+
 import html
 from pathlib import Path
 from typing import Any, Mapping
@@ -44,7 +46,7 @@ def _escape(value: Any) -> str:
 def _case_display_name(case: Mapping[str, Any], index: int | None = None) -> str:
     return preferred_display_name(
         case,
-        kind="测试项目",
+        kind=tr('测试项目'),
         index=index,
         descriptive_keys=("display_name", "description", "title", "label"),
     )
@@ -61,10 +63,10 @@ def _summary_html(report: Mapping[str, Any]) -> str:
     for case_index, case in enumerate(problem_cases, start=1):
         friendly_issues = case.get("friendly_issues") or case.get("issues") or []
         issues = "".join(f"<li>{_escape(item)}</li>" for item in friendly_issues)
-        issues = issues or "<li>执行器没有返回更具体的错误信息。</li>"
+        issues = issues or tr('<li>执行器没有返回更具体的错误信息。</li>')
         stage = str(case.get("stage_label") or "")
         stage_line = (
-            f"<div class='meta'>未完成阶段：{_escape(stage)}</div>"
+            tr("<div class='meta'>未完成阶段：{v0}</div>", v0=_escape(stage))
             if stage and str(case.get("stage") or "") != "complete"
             else ""
         )
@@ -88,27 +90,21 @@ def _summary_html(report: Mapping[str, Any]) -> str:
         timeline_html = ""
         if timeline_rows:
             timeline_html = (
-                "<div class='timeline-title'>操作过程</div>"
-                "<table class='timeline'>"
+                tr("<div class='timeline-title'>操作过程</div><table class='timeline'>")
                 + "".join(timeline_rows)
                 + "</table>"
             )
         issue_blocks.append(
-            "<div class='issue'>"
-            "<div class='scenario-label'>测试场景</div>"
-            f"<div class='issue-title'>{_escape(_case_display_name(case, case_index))}</div>"
-            f"{stage_line}<div class='result-label'>异常结果</div><ul>{issues}</ul>"
-            f"{timeline_html}</div>"
+            tr("<div class='issue'><div class='scenario-label'>测试场景</div><div class='issue-title'>{v0}</div>{v1}<div class='result-label'>异常结果</div><ul>{v2}</ul>{v3}</div>", v0=_escape(_case_display_name(case, case_index)), v1=stage_line, v2=issues, v3=timeline_html)
         )
     if not issue_blocks:
         if status == "passed":
             issue_blocks.append(
-                "<div class='success'>所有已执行测试均符合预期，没有发现逻辑问题。</div>"
+                tr("<div class='success'>所有已执行测试均符合预期，没有发现逻辑问题。</div>")
             )
         else:
             issue_blocks.append(
-                "<div class='issue'><div class='result-label'>失败原因</div>"
-                f"<div>{_escape(report.get('primary_reason'))}</div></div>"
+                tr("<div class='issue'><div class='result-label'>失败原因</div><div>{v0}</div></div>", v0=_escape(report.get('primary_reason')))
             )
     recommendations = [
         str(item)
@@ -118,36 +114,11 @@ def _summary_html(report: Mapping[str, Any]) -> str:
     recommendation_html = ""
     if recommendations:
         recommendation_html = (
-            "<h2>建议处理</h2><ol>"
+            tr('<h2>建议处理</h2><ol>')
             + "".join(f"<li>{_escape(item)}</li>" for item in recommendations)
             + "</ol>"
         )
-    return f"""
-    <html><head><style>
-      body {{ color:#1e1e1e; font-family:'Microsoft YaHei UI','Segoe UI',sans-serif; font-size:13px; }}
-      h2 {{ color:#323130; font-size:15px; margin:18px 0 8px 0; }}
-      .conclusion {{ border-left:4px solid {foreground}; background:{background}; padding:11px 13px; margin:2px 0 14px 0; }}
-      .conclusion-title {{ color:{foreground}; font-weight:700; margin-bottom:5px; }}
-      .issue {{ border:1px solid #edc7ca; background:#fffafb; padding:11px 13px; margin-bottom:10px; }}
-      .issue-title {{ color:#323130; font-weight:700; font-size:14px; margin:3px 0 7px 0; }}
-      .scenario-label, .result-label, .timeline-title {{ color:#605e5c; font-size:12px; font-weight:600; margin-top:7px; }}
-      .meta {{ color:#605e5c; margin-top:3px; }}
-      .success {{ border:1px solid #b7dfb5; background:#f3fbf2; color:#107c10; padding:10px 12px; }}
-      table.timeline {{ border-collapse:collapse; width:100%; margin-top:5px; }}
-      table.timeline td {{ border-top:1px solid #eadfe0; padding:7px 5px; vertical-align:top; }}
-      table.timeline td.time {{ width:64px; color:#605e5c; white-space:nowrap; }}
-      table.timeline td.marker {{ width:16px; font-weight:700; text-align:center; }}
-      li {{ margin:4px 0; }}
-    </style></head><body>
-      <div class='conclusion'>
-        <div class='conclusion-title'>测试结论</div>
-        <div>{_escape(report.get('primary_reason'))}</div>
-      </div>
-      <h2>问题定位</h2>
-      {''.join(issue_blocks)}
-      {recommendation_html}
-    </body></html>
-    """
+    return tr("\n    <html><head><style>\n      body {{ color:#1e1e1e; font-family:'Microsoft YaHei UI','Segoe UI',sans-serif; font-size:13px; }}\n      h2 {{ color:#323130; font-size:15px; margin:18px 0 8px 0; }}\n      .conclusion {{ border-left:4px solid {v0}; background:{v1}; padding:11px 13px; margin:2px 0 14px 0; }}\n      .conclusion-title {{ color:{v2}; font-weight:700; margin-bottom:5px; }}\n      .issue {{ border:1px solid #edc7ca; background:#fffafb; padding:11px 13px; margin-bottom:10px; }}\n      .issue-title {{ color:#323130; font-weight:700; font-size:14px; margin:3px 0 7px 0; }}\n      .scenario-label, .result-label, .timeline-title {{ color:#605e5c; font-size:12px; font-weight:600; margin-top:7px; }}\n      .meta {{ color:#605e5c; margin-top:3px; }}\n      .success {{ border:1px solid #b7dfb5; background:#f3fbf2; color:#107c10; padding:10px 12px; }}\n      table.timeline {{ border-collapse:collapse; width:100%; margin-top:5px; }}\n      table.timeline td {{ border-top:1px solid #eadfe0; padding:7px 5px; vertical-align:top; }}\n      table.timeline td.time {{ width:64px; color:#605e5c; white-space:nowrap; }}\n      table.timeline td.marker {{ width:16px; font-weight:700; text-align:center; }}\n      li {{ margin:4px 0; }}\n    </style></head><body>\n      <div class='conclusion'>\n        <div class='conclusion-title'>测试结论</div>\n        <div>{v3}</div>\n      </div>\n      <h2>问题定位</h2>\n      {v4}\n      {v5}\n    </body></html>\n    ", v0=foreground, v1=background, v2=foreground, v3=_escape(report.get('primary_reason')), v4=''.join(issue_blocks), v5=recommendation_html)
 
 
 def _technical_html(report: Mapping[str, Any]) -> str:
@@ -162,7 +133,7 @@ def _technical_html(report: Mapping[str, Any]) -> str:
         issue = "；".join(
             str(item) for item in case.get("friendly_issues", []) or []
         )
-        issue = issue or "测试通过"
+        issue = issue or tr('测试通过')
         rows.append(
             "<tr>"
             f"<td><span style='color:{color};font-weight:600'>{_escape(case.get('status_label'))}</span></td>"
@@ -172,7 +143,7 @@ def _technical_html(report: Mapping[str, Any]) -> str:
             "</tr>"
         )
     if not rows:
-        rows.append("<tr><td colspan='4'>没有进入单项测试执行。</td></tr>")
+        rows.append(tr("<tr><td colspan='4'>没有进入单项测试执行。</td></tr>"))
     workflow_errors = [
         str(item)
         for item in (
@@ -182,30 +153,14 @@ def _technical_html(report: Mapping[str, Any]) -> str:
         )
         if str(item).strip()
     ]
-    errors = "<br>".join(_escape(item) for item in workflow_errors) or "无"
-    evidence = "运行轨迹已保存，可通过窗口下方的“打开证据目录”查看。"
+    errors = "<br>".join(_escape(item) for item in workflow_errors) or tr('无')
+    evidence = tr('运行轨迹已保存，可通过窗口下方的“打开证据目录”查看。')
     if not report.get("evidence_path"):
-        evidence = "本次没有可打开的持久化运行轨迹。"
+        evidence = tr('本次没有可打开的持久化运行轨迹。')
     suite_name = report.get("suite_display_name") or naturalize_identifier(
-        report.get("suite_name"), kind="当前程序仿真测试"
+        report.get("suite_name"), kind=tr('当前程序仿真测试')
     )
-    return f"""
-    <html><head><style>
-      body {{ color:#1e1e1e; font-family:'Microsoft YaHei UI','Segoe UI',sans-serif; font-size:13px; }}
-      h2 {{ color:#323130; font-size:15px; margin:18px 0 8px 0; }}
-      table {{ border-collapse:collapse; width:100%; }}
-      th {{ background:#f3f6fb; text-align:left; }}
-      th, td {{ border:1px solid #d0d7e5; padding:7px 8px; vertical-align:top; }}
-      .raw {{ border:1px solid #d0d7e5; background:#f8fafc; padding:9px 12px; }}
-      code {{ color:#004578; font-family:Consolas,monospace; overflow-wrap:anywhere; }}
-    </style></head><body>
-      <h2>逐项执行结果</h2>
-      <table><tr><th>结果</th><th>测试项目</th><th>阶段</th><th>检查结果</th></tr>{''.join(rows)}</table>
-      <h2>执行器返回信息</h2><div class='raw'>{errors}</div>
-      <h2>运行证据</h2><div class='raw'>{evidence or '无持久化记录'}</div>
-      <h2>测试方案</h2><div class='raw'>{_escape(suite_name)}</div>
-    </body></html>
-    """
+    return tr("\n    <html><head><style>\n      body {{ color:#1e1e1e; font-family:'Microsoft YaHei UI','Segoe UI',sans-serif; font-size:13px; }}\n      h2 {{ color:#323130; font-size:15px; margin:18px 0 8px 0; }}\n      table {{ border-collapse:collapse; width:100%; }}\n      th {{ background:#f3f6fb; text-align:left; }}\n      th, td {{ border:1px solid #d0d7e5; padding:7px 8px; vertical-align:top; }}\n      .raw {{ border:1px solid #d0d7e5; background:#f8fafc; padding:9px 12px; }}\n      code {{ color:#004578; font-family:Consolas,monospace; overflow-wrap:anywhere; }}\n    </style></head><body>\n      <h2>逐项执行结果</h2>\n      <table><tr><th>结果</th><th>测试项目</th><th>阶段</th><th>检查结果</th></tr>{v0}</table>\n      <h2>执行器返回信息</h2><div class='raw'>{v1}</div>\n      <h2>运行证据</h2><div class='raw'>{v2}</div>\n      <h2>测试方案</h2><div class='raw'>{v3}</div>\n    </body></html>\n    ", v0=''.join(rows), v1=errors, v2=evidence or tr('无持久化记录'), v3=_escape(suite_name))
 
 
 def _expectations_html(report: Mapping[str, Any]) -> str:
@@ -230,35 +185,13 @@ def _expectations_html(report: Mapping[str, Any]) -> str:
             )
         if rows:
             blocks.append(
-                "<div class='case-title'>"
-                f"{_escape(_case_display_name(case, case_index))}"
-                "</div><table><tr><th>时间</th><th>检查对象</th>"
-                "<th>测试方案期望</th><th>仿真实际结果</th></tr>"
+                tr("<div class='case-title'>{v0}</div><table><tr><th>时间</th><th>检查对象</th><th>测试方案期望</th><th>仿真实际结果</th></tr>", v0=_escape(_case_display_name(case, case_index)))
                 + "".join(rows)
                 + "</table>"
             )
     if not blocks:
-        blocks.append("<div class='empty'>本次结果没有可对照的失败断言。</div>")
-    return f"""
-    <html><head><style>
-      body {{ color:#1e1e1e; font-family:'Microsoft YaHei UI','Segoe UI',sans-serif; font-size:13px; }}
-      .intro {{ border-left:4px solid #0078d4; background:#edf5ff; padding:10px 12px; margin-bottom:15px; }}
-      .case-title {{ color:#323130; font-size:14px; font-weight:700; margin:13px 0 7px 0; }}
-      table {{ border-collapse:collapse; width:100%; }}
-      th {{ background:#f3f6fb; text-align:left; }}
-      th, td {{ border:1px solid #d0d7e5; padding:8px 9px; vertical-align:top; }}
-      td.expected {{ color:#107c10; font-weight:600; }}
-      td.actual {{ color:#a4262c; font-weight:600; }}
-      .guide {{ border:1px solid #d0d7e5; background:#f8fafc; padding:10px 12px; margin-top:16px; }}
-      .empty {{ color:#605e5c; padding:12px; }}
-    </style></head><body>
-      <div class='intro'>这里显示测试方案原本要求的状态，以及 GX Simulator2 实际观察到的状态。</div>
-      {''.join(blocks)}
-      <div class='guide'><b>如何判断：</b><br>
-      如果“测试方案期望”符合你的控制需求，说明 PLC 程序行为需要检查；
-      如果期望本身不符合需求，应先修改测试方案，不能据此修改 PLC 程序。</div>
-    </body></html>
-    """
+        blocks.append(tr("<div class='empty'>本次结果没有可对照的失败断言。</div>"))
+    return tr("\n    <html><head><style>\n      body {{ color:#1e1e1e; font-family:'Microsoft YaHei UI','Segoe UI',sans-serif; font-size:13px; }}\n      .intro {{ border-left:4px solid #0078d4; background:#edf5ff; padding:10px 12px; margin-bottom:15px; }}\n      .case-title {{ color:#323130; font-size:14px; font-weight:700; margin:13px 0 7px 0; }}\n      table {{ border-collapse:collapse; width:100%; }}\n      th {{ background:#f3f6fb; text-align:left; }}\n      th, td {{ border:1px solid #d0d7e5; padding:8px 9px; vertical-align:top; }}\n      td.expected {{ color:#107c10; font-weight:600; }}\n      td.actual {{ color:#a4262c; font-weight:600; }}\n      .guide {{ border:1px solid #d0d7e5; background:#f8fafc; padding:10px 12px; margin-top:16px; }}\n      .empty {{ color:#605e5c; padding:12px; }}\n    </style></head><body>\n      <div class='intro'>这里显示测试方案原本要求的状态，以及 GX Simulator2 实际观察到的状态。</div>\n      {v0}\n      <div class='guide'><b>如何判断：</b><br>\n      如果“测试方案期望”符合你的控制需求，说明 PLC 程序行为需要检查；\n      如果期望本身不符合需求，应先修改测试方案，不能据此修改 PLC 程序。</div>\n    </body></html>\n    ", v0=''.join(blocks))
 
 
 def _passed_cases_html(report: Mapping[str, Any]) -> str:
@@ -302,7 +235,7 @@ class SimulatorReportDialog(QDialog):
         super().__init__(parent)
         self.report = dict(report or {})
         self.requested_action = ""
-        self.setWindowTitle("仿真结果报告")
+        self.setWindowTitle(tr('仿真结果报告'))
         self.setModal(True)
         self.resize(960, 720)
         self.setMinimumSize(780, 560)
@@ -319,13 +252,13 @@ class SimulatorReportDialog(QDialog):
 
         header = QHBoxLayout()
         titles = QVBoxLayout()
-        title = QLabel("仿真结果报告")
+        title = QLabel(tr('仿真结果报告'))
         title.setObjectName("SimulatorReportTitle")
         test_count = int(self.report.get("test_count") or 0)
         subtitle = QLabel(
-            f"共 {test_count} 项功能测试"
+            tr('共 {v0} 项功能测试', v0=test_count)
             if test_count
-            else "当前程序仿真测试"
+            else tr('当前程序仿真测试')
         )
         subtitle.setObjectName("SimulatorReportSubtitle")
         titles.addWidget(title)
@@ -343,10 +276,10 @@ class SimulatorReportDialog(QDialog):
         metrics = QHBoxLayout()
         metrics.setSpacing(8)
         for caption, value, color in (
-            ("通过", counts.get("passed", 0), "#107c10"),
-            ("失败", counts.get("failed", 0), "#a4262c"),
-            ("错误", counts.get("error", 0), "#a4262c"),
-            ("未执行", self.report.get("not_executed_count", 0), "#8a4b08"),
+            (tr('通过'), counts.get("passed", 0), "#107c10"),
+            (tr('失败'), counts.get("failed", 0), "#a4262c"),
+            (tr('错误'), counts.get("error", 0), "#a4262c"),
+            (tr('未执行'), self.report.get("not_executed_count", 0), "#8a4b08"),
         ):
             metrics.addWidget(_MetricCard(caption, int(value or 0), color, self))
         root.addLayout(metrics)
@@ -373,7 +306,7 @@ class SimulatorReportDialog(QDialog):
         self.passed_toggle.setObjectName("SimulatorPassedToggle")
         self.passed_toggle.setCheckable(True)
         self.passed_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self.passed_toggle.setText(f"其余 {passed_count} 项测试通过（点击展开）")
+        self.passed_toggle.setText(tr('其余 {v0} 项测试通过（点击展开）', v0=passed_count))
         self.passed_toggle.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
@@ -388,34 +321,34 @@ class SimulatorReportDialog(QDialog):
         expectation_browser = QTextBrowser(self.tabs)
         expectation_browser.setObjectName("SimulatorExpectationDetails")
         expectation_browser.setHtml(_expectations_html(self.report))
-        self.tabs.addTab(summary_page, "结果摘要")
-        self.tabs.addTab(expectation_browser, "测试期望")
-        self.tabs.addTab(technical_browser, "技术详情")
+        self.tabs.addTab(summary_page, tr('结果摘要'))
+        self.tabs.addTab(expectation_browser, tr('测试期望'))
+        self.tabs.addTab(technical_browser, tr('技术详情'))
         root.addWidget(self.tabs, 1)
 
         actions = QHBoxLayout()
         self.action_hint = QLabel("")
         self.action_hint.setObjectName("SimulatorReportActionHint")
         actions.addWidget(self.action_hint, 1)
-        copy_button = QPushButton("复制报告")
+        copy_button = QPushButton(tr('复制报告'))
         copy_button.clicked.connect(self._copy_report)
         actions.addWidget(copy_button)
         if status == "failed":
-            expectation_button = QPushButton("检查测试期望")
+            expectation_button = QPushButton(tr('检查测试期望'))
             expectation_button.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
             actions.addWidget(expectation_button)
-        evidence_button = QPushButton("打开证据目录")
+        evidence_button = QPushButton(tr('打开证据目录'))
         evidence_text = str(self.report.get("evidence_path") or "").strip()
         evidence_path = Path(evidence_text) if evidence_text else None
         evidence_button.setEnabled(bool(evidence_path and evidence_path.is_file()))
         evidence_button.clicked.connect(self._open_evidence_directory)
         actions.addWidget(evidence_button)
         if status == "failed" and str(self.report.get("run_id") or "").strip():
-            debug_button = QPushButton("进入故障调试")
+            debug_button = QPushButton(tr('进入故障调试'))
             debug_button.setObjectName("SimulatorReportPrimaryButton")
             debug_button.clicked.connect(self._request_debug)
             actions.addWidget(debug_button)
-        close_button = QPushButton("关闭")
+        close_button = QPushButton(tr('关闭'))
         if status != "failed":
             close_button.setObjectName("SimulatorReportPrimaryButton")
         close_button.setDefault(True)
@@ -452,12 +385,12 @@ class SimulatorReportDialog(QDialog):
         )
         count = len(self.report.get("passed_cases", []) or [])
         self.passed_toggle.setText(
-            f"其余 {count} 项测试通过（点击{'收起' if expanded else '展开'}）"
+            tr('其余 {v0} 项测试通过（点击{v1}）', v0=count, v1=tr('收起') if expanded else tr('展开'))
         )
 
     def _copy_report(self) -> None:
         QApplication.clipboard().setText(render_simulator_report_text(self.report))
-        self.action_hint.setText("报告已复制到剪贴板")
+        self.action_hint.setText(tr('报告已复制到剪贴板'))
 
     def _request_debug(self) -> None:
         self.requested_action = "debug"

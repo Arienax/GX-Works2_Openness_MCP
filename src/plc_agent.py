@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import re
+from i18n import tr
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -31,7 +32,7 @@ AGENT_SYSTEM_PROMPT = """你是 PLC AI 工作台内的工程助手。
 2. 只能使用提供的高层工程工具，不得假设存在鼠标、键盘、文件删除、PLC 写入或强制软元件工具。
 3. import_current_program_to_gxworks2 只提出确认请求，不代表已经导入。
 4. patch_program 只生成经过本地校验的候选补丁；必须告诉用户仍需查看差异并确认，不能自行接受候选版本或同步 GX Works2。
-5. 工具失败时如实说明。回答简洁、中文优先；引用手册事实时给出 source、page/section。
+5. 工具失败时如实说明。回答简洁，遵守应用设置的输出语言；引用手册事实时给出 source、page/section。
 """
 
 _AGENT_PATTERNS = (
@@ -102,15 +103,15 @@ def _emit_stream(callback, value: Any) -> None:
 
 def _fallback_content(audit: Sequence[Mapping[str, Any]]) -> str:
     if not audit:
-        return "没有获得可用的工具结果。"
+        return str(tr("没有获得可用的工具结果。"))
     successful = [item for item in audit if item.get("ok")]
     failed = [item for item in audit if not item.get("ok")]
     parts = []
     if successful:
-        parts.append("已完成：" + "、".join(str(item.get("tool")) for item in successful) + "。")
+        parts.append(str(tr("已完成：")) + ", ".join(str(item.get("tool")) for item in successful))
     if failed:
-        parts.append("未完成：" + "、".join(str(item.get("tool")) for item in failed) + "。")
-    return "".join(parts) or "工具调用已结束。"
+        parts.append(str(tr("未完成：")) + ", ".join(str(item.get("tool")) for item in failed))
+    return "\n".join(parts) or str(tr("工具调用已结束。"))
 
 
 def run_tool_agent(
@@ -150,7 +151,7 @@ def run_tool_agent(
     for round_number in range(1, max_rounds + 1):
         _emit_stream(
             on_progress,
-            f"AI 正在判断需要使用的工具（第 {round_number} 轮）",
+            tr("AI 正在判断需要使用的工具（第 {round} 轮）", round=round_number),
         )
         request = ModelRequest(
             tuple(messages),
@@ -170,7 +171,7 @@ def run_tool_agent(
             fallback_to_non_stream=True,
             on_fallback=lambda _error: _emit_stream(
                 on_progress,
-                "流式工具判断不可用，正在切换普通模式",
+                tr("流式工具判断不可用，正在切换普通模式"),
             ),
         )
         assistant = response.message
@@ -193,8 +194,8 @@ def run_tool_agent(
             )
 
         for call in calls:
-            _emit_stream(on_progress, f"已确认工具：{call.name or '未知工具'}")
-            _emit_stream(on_progress, f"正在执行工具：{call.name or '未知工具'}")
+            _emit_stream(on_progress, tr("已确认工具：{name}", name=call.name or tr("未知工具")))
+            _emit_stream(on_progress, tr("正在执行工具：{name}", name=call.name or tr("未知工具")))
             result = runtime.invoke(call, context)
             envelope = dict(result.data or {})
             audit.append(
@@ -218,10 +219,10 @@ def run_tool_agent(
             messages.append(result)
             _emit_stream(
                 on_progress,
-                f"工具执行{'失败' if result.is_error else '完成'}：{call.name or '未知工具'}",
+                tr("工具执行失败：{name}" if result.is_error else "工具执行完成：{name}", name=call.name or tr("未知工具")),
             )
 
-    raise RuntimeError(f"AI 工具调用超过上限（{max_rounds} 轮）。")
+    raise RuntimeError(tr("AI 工具调用超过上限（{rounds} 轮）。", rounds=max_rounds))
 
 
 __all__ = [

@@ -3,9 +3,9 @@ from pathlib import Path
 
 def test_simple_gx_bridge_actions_are_primary_ui():
     text = Path("src/main.py").read_text(encoding="utf-8")
-    assert 'QPushButton("写入 GX Works2")' in text
-    assert 'QPushButton("读取 GX Works2")' in text
-    assert 'QPushButton("高级同步")' in text
+    assert "QPushButton(tr('写入 GX Works2'))" in text
+    assert "QPushButton(tr('读取 GX Works2'))" in text
+    assert "QPushButton(tr('高级同步'))" in text
     assert "def _publish_current_version_to_gxworks2" in text
     assert "def _pull_current_version_from_gxworks2" in text
     assert 'self._start_gxworks2_inspection("pull")' in text
@@ -34,7 +34,7 @@ def test_pull_button_only_requires_selected_project():
 def test_bootstrap_pull_creates_root_version():
     text = Path("src/main.py").read_text(encoding="utf-8")
     completed = text.split("def _gxworks2_pull_completed", 1)[1].split("    def ", 1)[0]
-    assert '"从GX Works2导入的初始程序"' in completed
+    assert "tr('从GX Works2导入的初始程序')" in completed
     assert '"gxworks2_bootstrap"' in completed
     assert "None if bootstrap" in completed
 

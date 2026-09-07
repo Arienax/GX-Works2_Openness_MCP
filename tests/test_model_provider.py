@@ -239,7 +239,7 @@ def test_multimodal_profiles_encode_local_images_as_openai_compatible_blocks(
         )
     )
 
-    blocks = params["messages"][0]["content"]
+    blocks = next(message for message in params["messages"] if message["role"] == "user")["content"]
     assert blocks[0] == {"type": "text", "text": "请识别图中的输入输出"}
     assert blocks[1]["type"] == "image_url"
     data_url = blocks[1]["image_url"]["url"]
@@ -313,8 +313,9 @@ def test_assistant_reasoning_is_replayed_only_by_transport_adapter():
         )
     )
 
-    assert params["messages"][0]["reasoning_content"] == "保留本轮推理回放"
-    assert params["messages"][0]["tool_calls"][0]["function"]["name"] == "get_diagnostics"
+    assistant = next(message for message in params["messages"] if message["role"] == "assistant")
+    assert assistant["reasoning_content"] == "保留本轮推理回放"
+    assert assistant["tool_calls"][0]["function"]["name"] == "get_diagnostics"
 
 
 def test_custom_openai_compatible_profile_needs_no_new_provider_code():

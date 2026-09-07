@@ -13,6 +13,8 @@ its external signals or the persisted ConfirmedSpec shape.
 
 from __future__ import annotations
 
+from i18n import on_language_changed, tr
+
 import copy
 import importlib.util
 import sys
@@ -90,7 +92,7 @@ def _detach_widget(widget):
     return widget
 
 
-def _page_with_scroll(widget: QWidget | None, *, empty_text: str = "暂无内容") -> QWidget:
+def _page_with_scroll(widget: QWidget | None, *, empty_text: str = tr('暂无内容')) -> QWidget:
     page = QWidget()
     outer = QVBoxLayout(page)
     outer.setContentsMargins(0, 0, 0, 0)
@@ -127,11 +129,11 @@ class SpecificationWorkbenchDialog(QDialog):
     revise_with_draft_requested = pyqtSignal(str, object)
 
     NAV_ITEMS = (
-        ("概览", "dashboard"),
-        ("实现方案", "list-selection"),
-        ("控制参数", "settings-gear"),
-        ("I/O 映射", "symbol-field"),
-        ("高级约束", "shield"),
+        (tr('概览'), "dashboard"),
+        (tr('实现方案'), "list-selection"),
+        (tr('控制参数'), "settings-gear"),
+        (tr('I/O 映射'), "symbol-field"),
+        (tr('高级约束'), "shield"),
     )
 
     def __init__(
@@ -143,7 +145,7 @@ class SpecificationWorkbenchDialog(QDialog):
         plc_model=None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("生成前规格确认 · 规格工作台")
+        self.setWindowTitle(tr('生成前规格确认 · 规格工作台'))
         self.setModal(True)
         self.setMinimumSize(1000, 700)
         self.analysis = copy.deepcopy(analysis or {})
@@ -163,6 +165,7 @@ class SpecificationWorkbenchDialog(QDialog):
             self.previous_spec,
             plc_model=self.plc_model,
         )
+        self.editor.setParent(self)
         # The old card remains the state/validation engine. Its editable
         # sections are re-parented into dedicated workbench pages below.
         self.editor.hide()
@@ -171,6 +174,10 @@ class SpecificationWorkbenchDialog(QDialog):
         self._wire_editor()
         self._sync_live_state()
         self.apply_theme(self._theme)
+        self.destroyed.connect(on_language_changed(self._language_changed))
+
+    def _language_changed(self, _language):
+        self._sync_live_state()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -184,9 +191,9 @@ class SpecificationWorkbenchDialog(QDialog):
         header_layout.setSpacing(10)
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
-        title = QLabel("生成前规格确认")
+        title = QLabel(tr('生成前规格确认'))
         title.setObjectName("SpecWorkbenchTitle")
-        subtitle = QLabel("在生成 PLC 程序前确认实现方案、参数、I/O 与生成约束")
+        subtitle = QLabel(tr('在生成 PLC 程序前确认实现方案、参数、I/O 与生成约束'))
         subtitle.setObjectName("SpecWorkbenchSubtitle")
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
@@ -194,10 +201,10 @@ class SpecificationWorkbenchDialog(QDialog):
         header_layout.addStretch()
         self.model_badge = QLabel(self.plc_model)
         self.model_badge.setObjectName("SpecBadge")
-        mode_text = "差异确认" if bool(self.previous_spec) else "首次确认"
+        mode_text = tr('差异确认') if bool(self.previous_spec) else tr('首次确认')
         self.mode_badge = QLabel(mode_text)
         self.mode_badge.setObjectName("SpecBadge")
-        self.header_status = QLabel("检查规格…")
+        self.header_status = QLabel(tr('检查规格…'))
         self.header_status.setObjectName("SpecStatusBadge")
         header_layout.addWidget(self.model_badge)
         header_layout.addWidget(self.mode_badge)
@@ -214,7 +221,7 @@ class SpecificationWorkbenchDialog(QDialog):
         left.setMaximumWidth(220)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(12, 14, 12, 14)
-        nav_title = QLabel("规格导航")
+        nav_title = QLabel(tr('规格导航'))
         nav_title.setObjectName("SpecPanelTitle")
         left_layout.addWidget(nav_title)
         self.nav = QListWidget()
@@ -223,7 +230,7 @@ class SpecificationWorkbenchDialog(QDialog):
             self.nav.addItem(label)
         self.nav.setCurrentRow(0)
         left_layout.addWidget(self.nav, 1)
-        nav_hint = QLabel("逐项检查后再生成；未通过的字段会在右侧实时显示。")
+        nav_hint = QLabel(tr('逐项检查后再生成；未通过的字段会在右侧实时显示。'))
         nav_hint.setObjectName("SpecHint")
         nav_hint.setWordWrap(True)
         left_layout.addWidget(nav_hint)
@@ -234,7 +241,7 @@ class SpecificationWorkbenchDialog(QDialog):
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(18, 16, 18, 16)
         center_layout.setSpacing(10)
-        self.page_title = QLabel("概览")
+        self.page_title = QLabel(tr('概览'))
         self.page_title.setObjectName("SpecPageTitle")
         center_layout.addWidget(self.page_title)
         self.stack = QStackedWidget()
@@ -249,7 +256,7 @@ class SpecificationWorkbenchDialog(QDialog):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(14, 14, 14, 14)
         right_layout.setSpacing(10)
-        right_title = QLabel("实时检查")
+        right_title = QLabel(tr('实时检查'))
         right_title.setObjectName("SpecPanelTitle")
         right_layout.addWidget(right_title)
         self.validation_summary = QLabel()
@@ -286,19 +293,19 @@ class SpecificationWorkbenchDialog(QDialog):
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(18, 10, 18, 10)
         footer_layout.setSpacing(8)
-        self.footer_state = QLabel("规格草稿")
+        self.footer_state = QLabel(tr('规格草稿'))
         self.footer_state.setObjectName("SpecFooterState")
         footer_layout.addWidget(self.footer_state)
         footer_layout.addStretch()
-        self.revise_button = QPushButton("修改原始需求")
+        self.revise_button = QPushButton(tr('修改原始需求'))
         self.revise_button.setObjectName("SecondaryButton")
-        set_codicon(self.revise_button, "edit", "修改原始需求", 10)
-        self.save_button = QPushButton("保存草稿")
+        set_codicon(self.revise_button, "edit", tr('修改原始需求'), 10)
+        self.save_button = QPushButton(tr('保存草稿'))
         self.save_button.setObjectName("SecondaryButton")
-        set_codicon(self.save_button, "save", "保存草稿", 10)
-        self.confirm_button = QPushButton("确认并生成")
+        set_codicon(self.save_button, "save", tr('保存草稿'), 10)
+        self.confirm_button = QPushButton(tr('确认并生成'))
         self.confirm_button.setObjectName("PrimaryButton")
-        set_codicon(self.confirm_button, "play", "确认并生成", 10)
+        set_codicon(self.confirm_button, "play", tr('确认并生成'), 10)
         footer_layout.addWidget(self.revise_button)
         footer_layout.addWidget(self.save_button)
         footer_layout.addWidget(self.confirm_button)
@@ -322,7 +329,7 @@ class SpecificationWorkbenchDialog(QDialog):
             summary.setObjectName("SpecOverviewSummary")
             overview_layout.addWidget(summary)
         if bool(self.previous_spec):
-            for title in ("本轮变更", "沿用项（点击展开）"):
+            for title in (tr('本轮变更'), tr('沿用项（点击展开）')):
                 group = _detach_widget(_group_by_title(self.editor, title))
                 if group is not None:
                     overview_layout.addWidget(group)
@@ -333,12 +340,12 @@ class SpecificationWorkbenchDialog(QDialog):
         overview_layout.addStretch()
         self.stack.addWidget(_page_with_scroll(overview_host))
 
-        approach_group = _detach_widget(_group_by_title(self.editor, "实现方案"))
+        approach_group = _detach_widget(_group_by_title(self.editor, tr('实现方案')))
         self.stack.addWidget(
-            _page_with_scroll(approach_group, empty_text="当前规格没有可选实现方案。")
+            _page_with_scroll(approach_group, empty_text=tr('当前规格没有可选实现方案。'))
         )
 
-        parameter_group = _detach_widget(_group_by_title(self.editor, "关键参数"))
+        parameter_group = _detach_widget(_group_by_title(self.editor, tr('关键参数')))
         if hasattr(self.editor, "parameter_table"):
             table = self.editor.parameter_table
             table.setMaximumHeight(16777215)
@@ -350,11 +357,11 @@ class SpecificationWorkbenchDialog(QDialog):
         self.stack.addWidget(
             _page_with_scroll(
                 parameter_group,
-                empty_text="当前规格没有需要确认的控制参数。",
+                empty_text=tr('当前规格没有需要确认的控制参数。'),
             )
         )
 
-        io_group = _detach_widget(_group_by_title(self.editor, "I/O 分配"))
+        io_group = _detach_widget(_group_by_title(self.editor, tr('I/O 分配')))
         if hasattr(self.editor, "io_table_widget"):
             table = self.editor.io_table_widget
             table.setMaximumHeight(16777215)
@@ -366,19 +373,19 @@ class SpecificationWorkbenchDialog(QDialog):
         if hasattr(self.editor, "raw_preview"):
             self.editor.raw_preview.setMaximumHeight(120)
         self.stack.addWidget(
-            _page_with_scroll(io_group, empty_text="当前规格没有 I/O 分配。")
+            _page_with_scroll(io_group, empty_text=tr('当前规格没有 I/O 分配。'))
         )
 
         advanced_host = QWidget()
         advanced_layout = QVBoxLayout(advanced_host)
         advanced_layout.setContentsMargins(4, 4, 8, 8)
-        notes_group = _detach_widget(_group_by_title(self.editor, "本轮补充说明"))
+        notes_group = _detach_widget(_group_by_title(self.editor, tr('本轮补充说明')))
         if notes_group is not None:
             if hasattr(self.editor, "notes_edit"):
                 self.editor.notes_edit.setMaximumHeight(16777215)
                 self.editor.notes_edit.setMinimumHeight(150)
             advanced_layout.addWidget(notes_group)
-        advanced_title = QLabel("当前生成约束")
+        advanced_title = QLabel(tr('当前生成约束'))
         advanced_title.setObjectName("SpecSectionTitle")
         advanced_layout.addWidget(advanced_title)
         self.advanced_contract = QLabel()
@@ -394,7 +401,7 @@ class SpecificationWorkbenchDialog(QDialog):
         # The legacy final-action controls remain hidden; the fixed footer is
         # now the only confirmation surface.
         for button in self.editor.findChildren(QPushButton):
-            if button.text().strip() in {"返回修改", "确认并生成"}:
+            if button.text().strip() in {tr('返回修改'), tr('确认并生成')}:
                 button.hide()
 
     def _wire_editor(self):
@@ -420,9 +427,7 @@ class SpecificationWorkbenchDialog(QDialog):
 
     @staticmethod
     def _issue_text(issue):
-        if isinstance(issue, dict):
-            return str(issue.get("message") or issue.get("code") or issue)
-        return str(issue)
+        return _LegacyRequirementReviewCard._validation_message(issue)
 
     def _selected_approach(self, draft):
         approach = draft.get("selected_approach") or {}
@@ -433,18 +438,18 @@ class SpecificationWorkbenchDialog(QDialog):
     def _contract_text(self, draft):
         approach = self._selected_approach(draft)
         if not approach:
-            return "当前未选择实现方案。"
-        name = _legacy.preferred_display_name(approach, kind="方案", index=1)
-        summary = _legacy.format_contract_summary(approach)
-        lines = [f"实现方案：{name}"]
+            return tr('当前未选择实现方案。')
+        name = _legacy.preferred_display_name(approach, kind=tr('方案'), index=1)
+        summary = _legacy.format_contract_summary(approach, localized=True)
+        lines = [tr('实现方案：{v0}', v0=name)]
         if summary:
             lines.append(
-                f"生成硬约束：{_legacy.naturalize_display_text(summary)}"
+                tr('生成硬约束：{v0}', v0=summary)
             )
         guide = str(approach.get("generation_guide") or "").strip()
         if guide:
-            lines.append("生成要点：" + _legacy.naturalize_display_text(guide))
-        return "\n".join(lines)
+            lines.append(tr('生成要点：') + _legacy.naturalize_display_text(guide))
+        return tr("\n").join(lines)
 
     def _sync_live_state(self):
         try:
@@ -459,44 +464,44 @@ class SpecificationWorkbenchDialog(QDialog):
         io_rows = list(draft.get("io_table") or [])
         approach = self._selected_approach(draft)
         approach_name = (
-            _legacy.preferred_display_name(approach, kind="方案", index=1)
+            _legacy.preferred_display_name(approach, kind=tr('方案'), index=1)
             if approach
-            else "未选择"
+            else tr('未选择')
         )
 
         if errors:
-            state = f"{len(errors)} 个问题待处理"
-            self.header_status.setText("需要修改")
+            state = tr('{v0} 个问题待处理', v0=len(errors))
+            self.header_status.setText(tr('需要修改'))
             self.header_status.setProperty("state", "error")
             self.confirm_button.setEnabled(False)
         elif warnings:
-            state = f"可生成 · {len(warnings)} 个提醒"
-            self.header_status.setText("可生成")
+            state = tr('可生成 · {v0} 个提醒', v0=len(warnings))
+            self.header_status.setText(tr('可生成'))
             self.header_status.setProperty("state", "warning")
             self.confirm_button.setEnabled(True)
         else:
-            state = "规格完整 · 可以生成"
-            self.header_status.setText("规格可生成")
+            state = tr('规格完整 · 可以生成')
+            self.header_status.setText(tr('规格可生成'))
             self.header_status.setProperty("state", "ok")
             self.confirm_button.setEnabled(True)
         self.footer_state.setText(state)
 
         lines = []
         if errors:
-            lines.append(f"❌ {len(errors)} 个错误")
+            lines.append(tr('❌ {v0} 个错误', v0=len(errors)))
             lines.extend(f"• {self._issue_text(item)}" for item in errors[:8])
         else:
-            lines.append("✓ 必填规格已满足")
+            lines.append(tr('✓ 必填规格已满足'))
         if warnings:
-            lines.append(f"\n⚠ {len(warnings)} 个提醒")
+            lines.append(tr('\n⚠ {v0} 个提醒', v0=len(warnings)))
             lines.extend(f"• {self._issue_text(item)}" for item in warnings[:6])
         self.validation_summary.setText("\n".join(lines))
 
         metrics = [
             f"PLC：{self.plc_model}",
-            f"实现方案：{approach_name}",
-            f"控制参数：{len(parameters)} 项",
-            f"I/O 映射：{len(io_rows)} 项",
+            tr('实现方案：{v0}', v0=approach_name),
+            tr('控制参数：{v0} 项', v0=len(parameters)),
+            tr('I/O 映射：{v0} 项', v0=len(io_rows)),
         ]
         self.overview_metrics.setText("\n".join(metrics))
         contract_text = self._contract_text(draft)
@@ -518,7 +523,7 @@ class SpecificationWorkbenchDialog(QDialog):
         self.draft_changed.emit(copy.deepcopy(draft))
         self._sync_live_state()
         self.footer_state.setText(
-            "草稿已保存 · " + self.footer_state.text()
+            tr('草稿已保存 · ') + self.footer_state.text()
         )
 
     def _request_revision(self):
@@ -667,9 +672,9 @@ class RequirementReviewCard(QFrame):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
         header = QHBoxLayout()
-        title = QLabel("生成前规格确认")
+        title = QLabel(tr('生成前规格确认'))
         title.setObjectName("SpecSummaryTitle")
-        self.status = QLabel("待确认")
+        self.status = QLabel(tr('待确认'))
         self.status.setObjectName("SpecSummaryStatus")
         header.addWidget(title)
         header.addStretch()
@@ -684,9 +689,9 @@ class RequirementReviewCard(QFrame):
 
         actions = QHBoxLayout()
         actions.addStretch()
-        self.open_button = QPushButton("打开规格工作台")
+        self.open_button = QPushButton(tr('打开规格工作台'))
         self.open_button.setObjectName("PrimaryButton")
-        set_codicon(self.open_button, "open-preview", "打开规格工作台", 10)
+        set_codicon(self.open_button, "open-preview", tr('打开规格工作台'), 10)
         self.open_button.clicked.connect(self.open_workbench)
         actions.addWidget(self.open_button)
         layout.addLayout(actions)
@@ -706,29 +711,27 @@ class RequirementReviewCard(QFrame):
         warnings = list(result.get("warnings") or [])
         approach = draft.get("selected_approach") or {}
         approach_name = (
-            _legacy.preferred_display_name(approach, kind="方案", index=1)
+            _legacy.preferred_display_name(approach, kind=tr('方案'), index=1)
             if isinstance(approach, dict) and approach
-            else "未选择"
+            else tr('未选择')
         )
         summary_text = _legacy.naturalize_display_text(
             draft.get("summary")
             or self.analysis.get("summary")
-            or "规格草案已生成"
+            or tr('规格草案已生成')
         )
         lines = [summary_text]
         lines.append(
-            f"{self.plc_model} · {approach_name} · "
-            f"{len(draft.get('parameters') or [])} 项参数 · "
-            f"{len(draft.get('io_table') or [])} 项 I/O"
+            tr('{v0} · {v1} · {v2} 项参数 · {v3} 项 I/O', v0=self.plc_model, v1=approach_name, v2=len(draft.get('parameters') or []), v3=len(draft.get('io_table') or []))
         )
         if errors:
-            self.status.setText(f"{len(errors)} 项待处理")
+            self.status.setText(tr('{v0} 项待处理', v0=len(errors)))
             self.status.setProperty("state", "error")
         elif warnings:
-            self.status.setText(f"可确认 · {len(warnings)} 个提醒")
+            self.status.setText(tr('可确认 · {v0} 个提醒', v0=len(warnings)))
             self.status.setProperty("state", "warning")
         else:
-            self.status.setText("可确认")
+            self.status.setText(tr('可确认'))
             self.status.setProperty("state", "ok")
         self.summary.setText("\n".join(lines))
         self.status.style().unpolish(self.status)
@@ -775,7 +778,7 @@ class RequirementReviewCard(QFrame):
         self.draft = copy.deepcopy(spec)
         self._draft_modified = False
         self._refresh_summary(self.draft)
-        self.status.setText("已确认")
+        self.status.setText(tr('已确认'))
         self.status.setProperty("state", "ok")
         self.status.style().unpolish(self.status)
         self.status.style().polish(self.status)

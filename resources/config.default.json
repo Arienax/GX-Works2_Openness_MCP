@@ -1,4 +1,5 @@
 {
+    "language": "zh-CN",
     "activeModelProfileId": "deepseek-default",
     "modelProfiles": [
         {

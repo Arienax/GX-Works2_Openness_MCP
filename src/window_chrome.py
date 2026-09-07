@@ -1,3 +1,4 @@
+from i18n import tr
 from qt_compat import QEvent, QObject, Qt
 from qt_compat import QFont
 from qt_compat import (
@@ -101,7 +102,7 @@ class DialogTitleBar(QFrame):
             self.minimize_button = self._window_button(
                 "chrome-minimize",
                 "DialogWindowMinButton",
-                "最小化",
+                tr('最小化'),
             )
             self.minimize_button.clicked.connect(window.showMinimized)
             layout.addWidget(self.minimize_button)
@@ -111,7 +112,7 @@ class DialogTitleBar(QFrame):
             self.maximize_button = self._window_button(
                 "chrome-maximize",
                 "DialogWindowMaxButton",
-                "最大化",
+                tr('最大化'),
             )
             self.maximize_button.clicked.connect(self._toggle_maximized)
             layout.addWidget(self.maximize_button)
@@ -119,7 +120,7 @@ class DialogTitleBar(QFrame):
         self.close_button = self._window_button(
             "chrome-close",
             "DialogWindowCloseButton",
-            "关闭",
+            tr('关闭'),
         )
         self.close_button.clicked.connect(window.close)
         layout.addWidget(self.close_button)
@@ -150,7 +151,7 @@ class DialogTitleBar(QFrame):
             "chrome-restore" if maximized else "chrome-maximize",
             point_size=10,
         )
-        tooltip = "还原" if maximized else "最大化"
+        tooltip = tr('还原') if maximized else tr('最大化')
         self.maximize_button.setToolTip(tooltip)
         self.maximize_button.setAccessibleName(tooltip)
 

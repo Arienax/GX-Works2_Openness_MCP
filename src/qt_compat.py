@@ -170,3 +170,8 @@ if not USING_QT6:
             cls.position = lambda self: QPointF(self.pos())
         if not hasattr(cls, "globalPosition") and hasattr(cls, "globalPos"):
             cls.globalPosition = lambda self: QPointF(self.globalPos())
+
+
+from qt_i18n import install_qt_i18n
+
+install_qt_i18n(globals())

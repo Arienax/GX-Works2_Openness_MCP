@@ -218,6 +218,9 @@ def test_successful_workbench_import_uses_nonblocking_status(monkeypatch):
         def statusBar(self):
             return self._status
 
+        def _reset_gx_action_buttons(self):
+            self.gxworks2_import_button.setText("写入 GX Works2")
+
     def modal_called(*_args, **_kwargs):
         raise AssertionError("pure import success must not open a modal dialog")
 
@@ -354,13 +357,21 @@ def test_simulator_button_converts_cache_read_exception_to_warning(monkeypatch):
 
 
 def test_simulator_completion_dialog_includes_observed_scan_monitor_values():
+    import ast
     import main as main_module
 
     source = Path(main_module.__file__).read_text(encoding="utf-8")
-    assert '"\\n扫描时间："' in source
-    assert 'row.get("latest_current_ms")' in source
-    assert 'row.get("observed_minimum_ms")' in source
-    assert 'row.get("observed_maximum_ms")' in source
+    tree = ast.parse(source)
+    templates = [node.args[0].value for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                 and node.func.id == "tr" and node.args
+                 and isinstance(node.args[0], ast.Constant)]
+    assert "\n扫描时间：当前 {v0} / 最小 {v1} / 最大 {v2}" in templates
+    for field in ("latest_current_ms", "observed_minimum_ms", "observed_maximum_ms"):
+        assert any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                   and node.func.attr == "get" and node.args
+                   and isinstance(node.args[0], ast.Constant) and node.args[0].value == field
+                   for node in ast.walk(tree))
 
 
 def test_csv_manager_accepts_generated_statement_list(tmp_path):

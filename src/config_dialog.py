@@ -1,6 +1,5 @@
-"""
-API 请求格式配置对话框
-"""
+"""Application settings: model profiles and presentation language."""
+from i18n import tr
 import copy
 import json
 from qt_compat import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -258,11 +257,11 @@ DIALOG_DARK_QSS += DIALOG_GEOMETRY_QSS
 
 _TUNING_KEYS = frozenset({"temperature", "top_p", "reasoning_effort"})
 _REASONING_EFFORT_VALUES = (None, "low", "medium", "high", "max")
-_REASONING_EFFORT_LABELS = ("服务默认", "低", "中", "高", "最高")
+_REASONING_EFFORT_LABELS = (tr('服务默认'), tr('低'), tr('中'), tr('高'), tr('最高'))
 _PROVIDER_LABELS = {
     "deepseek": "DeepSeek",
-    "zhipu": "智谱",
-    "custom": "自定义",
+    "zhipu": tr('智谱'),
+    "custom": tr('自定义'),
 }
 
 
@@ -283,6 +282,9 @@ class ApiConnectionTestThread(QThread):
             self.failed.emit(message)
 
 
+from i18n import LANGUAGES, normalize_language, set_language
+
+
 class RequestTemplateConfigDialog(QDialog):
     """API 请求格式配置对话框"""
 
@@ -300,7 +302,7 @@ class RequestTemplateConfigDialog(QDialog):
         self._credential_delete = set()
         self._current_profile_id = ""
         self._loading_profile = False
-        window_title = "首次使用设置" if self.initial_setup else "API 设置"
+        window_title = tr('首次使用设置') if self.initial_setup else tr('设置')
         self.setWindowTitle(window_title)
         prepare_frameless_dialog(self)
         self.resize(790, 700)
@@ -322,7 +324,7 @@ class RequestTemplateConfigDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         self.title_bar = DialogTitleBar(
             self,
-            "首次使用设置" if self.initial_setup else "API 设置",
+            tr('首次使用设置') if self.initial_setup else tr('设置'),
             icon_name="settings-gear",
         )
         layout.addWidget(self.title_bar)
@@ -332,7 +334,7 @@ class RequestTemplateConfigDialog(QDialog):
         content_layout.setSpacing(12)
         content_layout.setContentsMargins(24, 20, 24, 20)
 
-        title = QLabel("连接 AI 服务")
+        title = QLabel(tr('应用设置'))
         title.setObjectName("TitleLabel")
         content_layout.addWidget(title)
 
@@ -342,53 +344,53 @@ class RequestTemplateConfigDialog(QDialog):
         basic_layout.setSpacing(10)
         basic_layout.setContentsMargins(18, 18, 18, 18)
 
-        key_label = QLabel("API Key:")
+        key_label = QLabel(tr("API Key:"))
         key_row = QHBoxLayout()
         key_row.setSpacing(6)
         self.api_key_input = QLineEdit()
         self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_input.setPlaceholderText("请输入 API Key")
+        self.api_key_input.setPlaceholderText(tr('请输入 API Key'))
         self.api_key_input.textEdited.connect(self._api_key_edited)
         key_row.addWidget(self.api_key_input, 1)
         self.toggle_key_btn = QPushButton()
         self.toggle_key_btn.setObjectName("IconButton")
         self.toggle_key_btn.setFixedSize(36, 36)
-        self.toggle_key_btn.setToolTip("显示 API Key")
+        self.toggle_key_btn.setToolTip(tr('显示 API Key'))
         set_codicon(self.toggle_key_btn, "eye", point_size=12)
         self.toggle_key_btn.clicked.connect(self._toggle_api_key_visibility)
         key_row.addWidget(self.toggle_key_btn)
         self.clear_key_btn = QPushButton()
         self.clear_key_btn.setObjectName("IconButton")
         self.clear_key_btn.setFixedSize(36, 36)
-        self.clear_key_btn.setToolTip("清除已保存的 API Key")
+        self.clear_key_btn.setToolTip(tr('清除已保存的 API Key'))
         set_codicon(self.clear_key_btn, "close", point_size=12)
         self.clear_key_btn.clicked.connect(self._clear_api_key)
         key_row.addWidget(self.clear_key_btn)
         basic_layout.addWidget(key_label)
         basic_layout.addLayout(key_row)
 
-        credential_hint = QLabel("API Key 将安全保存到当前用户的 Windows 凭据管理器。")
+        credential_hint = QLabel(tr('API Key 将安全保存到当前用户的 Windows 凭据管理器。'))
         credential_hint.setObjectName("HintLabel")
         basic_layout.addWidget(credential_hint)
 
-        url_label = QLabel("Base URL:")
+        url_label = QLabel(tr("Base URL:"))
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("https://api.deepseek.com")
         basic_layout.addWidget(url_label)
         basic_layout.addWidget(self.url_input)
 
-        model_label = QLabel("默认模型:")
+        model_label = QLabel(tr('默认模型:'))
         basic_layout.addWidget(model_label)
 
         model_selector_row = QHBoxLayout()
         model_selector_row.setSpacing(8)
         provider_column = QVBoxLayout()
         provider_column.setSpacing(4)
-        provider_column.addWidget(QLabel("模型提供商"))
+        provider_column.addWidget(QLabel(tr('模型提供商')))
         self.provider_combo = BorderedComboBox()
         self.provider_combo.setMinimumWidth(170)
         self.provider_combo.setFixedHeight(36)
-        self.provider_combo.setToolTip("选择模型服务提供商")
+        self.provider_combo.setToolTip(tr('选择模型服务提供商'))
         self.provider_combo.currentIndexChanged.connect(
             self._on_provider_changed
         )
@@ -397,12 +399,12 @@ class RequestTemplateConfigDialog(QDialog):
 
         model_column = QVBoxLayout()
         model_column.setSpacing(4)
-        model_column.addWidget(QLabel("具体模型"))
+        model_column.addWidget(QLabel(tr('具体模型')))
         self.preset_combo = BorderedComboBox()
         self.preset_combo.setMinimumWidth(270)
         self.preset_combo.setFixedHeight(36)
         self.preset_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.preset_combo.setToolTip("选择当前提供商下的具体模型")
+        self.preset_combo.setToolTip(tr('选择当前提供商下的具体模型'))
         self.preset_combo.currentIndexChanged.connect(
             self._on_profile_changed
         )
@@ -413,18 +415,18 @@ class RequestTemplateConfigDialog(QDialog):
 
         profile_row = QHBoxLayout()
         profile_row.setSpacing(6)
-        self.add_profile_btn = QPushButton("添加模型")
-        self.add_profile_btn.setToolTip("添加 OpenAI-compatible 自定义模型")
+        self.add_profile_btn = QPushButton(tr('添加模型'))
+        self.add_profile_btn.setToolTip(tr('添加 OpenAI-compatible 自定义模型'))
         self.add_profile_btn.setFixedHeight(34)
         self.add_profile_btn.setMinimumWidth(104)
-        set_codicon(self.add_profile_btn, "add", "添加模型", 10)
+        set_codicon(self.add_profile_btn, "add", tr('添加模型'), 10)
         self.add_profile_btn.clicked.connect(self._add_custom_profile)
-        self.delete_profile_btn = QPushButton("删除")
+        self.delete_profile_btn = QPushButton(tr('删除'))
         self.delete_profile_btn.setObjectName("CancelBtn")
-        self.delete_profile_btn.setToolTip("删除当前自定义模型配置")
+        self.delete_profile_btn.setToolTip(tr('删除当前自定义模型配置'))
         self.delete_profile_btn.setFixedHeight(34)
         self.delete_profile_btn.setMinimumWidth(82)
-        set_codicon(self.delete_profile_btn, "trash", "删除", 10)
+        set_codicon(self.delete_profile_btn, "trash", tr('删除'), 10)
         self.delete_profile_btn.clicked.connect(self._delete_current_profile)
         profile_row.addWidget(self.add_profile_btn)
         profile_row.addWidget(self.delete_profile_btn)
@@ -432,12 +434,12 @@ class RequestTemplateConfigDialog(QDialog):
         basic_layout.addLayout(profile_row)
 
         test_row = QHBoxLayout()
-        self.test_btn = QPushButton("测试连接")
-        set_codicon(self.test_btn, "plug", "测试连接", 10)
+        self.test_btn = QPushButton(tr('测试连接'))
+        set_codicon(self.test_btn, "plug", tr('测试连接'), 10)
         self.test_btn.setFixedHeight(36)
         self.test_btn.setMinimumWidth(118)
         self.test_btn.clicked.connect(self._test_connection)
-        self.connection_status = QLabel("尚未测试")
+        self.connection_status = QLabel(tr('尚未测试'))
         self.connection_status.setObjectName("StatusLabel")
         test_row.addWidget(self.test_btn)
         test_row.addWidget(self.connection_status, 1)
@@ -453,7 +455,7 @@ class RequestTemplateConfigDialog(QDialog):
         self.hint_label.setObjectName("HintLabel")
         advanced_layout.addWidget(self.hint_label)
 
-        tuning_title = QLabel("生成参数微调")
+        tuning_title = QLabel(tr('生成参数微调'))
         tuning_title.setObjectName("TitleLabel")
         advanced_layout.addWidget(tuning_title)
 
@@ -461,7 +463,7 @@ class RequestTemplateConfigDialog(QDialog):
             self._add_tuning_slider(
                 advanced_layout,
                 "Temperature",
-                "控制输出随机性；最左侧使用模型服务默认值。",
+                tr('控制输出随机性；最左侧使用模型服务默认值。'),
                 -1,
                 40,
             )
@@ -469,7 +471,7 @@ class RequestTemplateConfigDialog(QDialog):
         self.top_p_slider, self.top_p_value_label = self._add_tuning_slider(
             advanced_layout,
             "Top P",
-            "控制候选词采样范围；通常只需调整 Temperature 或 Top P 之一。",
+            tr('控制候选词采样范围；通常只需调整 Temperature 或 Top P 之一。'),
             -1,
             100,
         )
@@ -478,8 +480,8 @@ class RequestTemplateConfigDialog(QDialog):
             self.reasoning_effort_value_label,
         ) = self._add_tuning_slider(
             advanced_layout,
-            "推理强度",
-            "从服务默认、低、中、高到最高共五档。",
+            tr('推理强度'),
+            tr('从服务默认、低、中、高到最高共五档。'),
             0,
             len(_REASONING_EFFORT_VALUES) - 1,
         )
@@ -490,13 +492,13 @@ class RequestTemplateConfigDialog(QDialog):
         ):
             slider.valueChanged.connect(self._on_tuning_controls_changed)
 
-        editor_label = QLabel("兼容性与厂商扩展（JSON，可选）:")
+        editor_label = QLabel(tr('兼容性与厂商扩展（JSON，可选）:'))
         advanced_layout.addWidget(editor_label)
 
         self.template_edit = QPlainTextEdit()
         self.template_edit.setFont(QFont("Consolas", 11))
         self.template_edit.setPlaceholderText(
-            "编辑 capabilities、其他 generationDefaults 和 requestOverrides..."
+            tr('编辑 capabilities、其他 generationDefaults 和 requestOverrides...')
         )
         self.template_edit.setMinimumHeight(130)
         advanced_layout.addWidget(self.template_edit, stretch=1)
@@ -505,26 +507,40 @@ class RequestTemplateConfigDialog(QDialog):
         self.provider_label.setObjectName("HintLabel")
         advanced_layout.addWidget(self.provider_label)
 
-        self.tabs.addTab(self.basic_tab, "基础设置")
-        self.tabs.addTab(self.advanced_tab, "高级设置")
+        self.tabs.addTab(self.basic_tab, tr('API 设置'))
+        self.tabs.addTab(self.advanced_tab, tr('API 高级设置'))
+        self.language_tab = QWidget()
+        language_layout = QVBoxLayout(self.language_tab)
+        language_layout.setContentsMargins(18, 18, 18, 18)
+        language_layout.addWidget(QLabel(tr('界面与输出语言')))
+        self.language_combo = BorderedComboBox()
+        self.language_combo.setObjectName("LanguageCombo")
+        for code, native_name in LANGUAGES:
+            self.language_combo.addItem(native_name, code)
+        language_layout.addWidget(self.language_combo)
+        language_hint = QLabel(tr('保存后立即更新界面。新的 AI 回复、推理摘要和运行提示将使用所选语言。用户原文、已有程序和历史回复保持原样。'))
+        language_hint.setWordWrap(True)
+        language_layout.addWidget(language_hint)
+        language_layout.addStretch()
+        self.tabs.addTab(self.language_tab, tr('语言'))
         content_layout.addWidget(self.tabs, 1)
 
         # ---- 按钮 ----
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
-        self.save_btn = QPushButton("保存并应用")
-        set_codicon(self.save_btn, "pass", "保存并应用", 10)
+        self.save_btn = QPushButton(tr('保存并应用'))
+        set_codicon(self.save_btn, "pass", tr('保存并应用'), 10)
         self.save_btn.setFixedHeight(38)
         self.save_btn.setMinimumWidth(128)
         self.save_btn.clicked.connect(self._on_save)
 
-        self.cancel_btn = QPushButton("稍后设置" if self.initial_setup else "取消")
+        self.cancel_btn = QPushButton(tr('稍后设置') if self.initial_setup else tr('取消'))
         self.cancel_btn.setObjectName("CancelBtn")
         set_codicon(
             self.cancel_btn,
             "close",
-            "稍后设置" if self.initial_setup else "取消",
+            tr('稍后设置') if self.initial_setup else tr('取消'),
             10,
         )
         self.cancel_btn.setFixedHeight(38)
@@ -547,7 +563,7 @@ class RequestTemplateConfigDialog(QDialog):
         header = QHBoxLayout()
         header.setSpacing(8)
         label = QLabel(title)
-        value_label = QLabel("服务默认")
+        value_label = QLabel(tr('服务默认'))
         value_label.setObjectName("HintLabel")
         value_label.setMinimumWidth(76)
         value_label.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -613,7 +629,7 @@ class RequestTemplateConfigDialog(QDialog):
 
     def _mark_connection_dirty(self):
         if hasattr(self, "connection_status"):
-            self.connection_status.setText("配置已修改，尚未测试")
+            self.connection_status.setText(tr('配置已修改，尚未测试'))
 
     def _toggle_api_key_visibility(self):
         is_hidden = (
@@ -625,7 +641,7 @@ class RequestTemplateConfigDialog(QDialog):
             else QLineEdit.EchoMode.Password
         )
         icon = "eye-closed" if is_hidden else "eye"
-        tooltip = "隐藏 API Key" if is_hidden else "显示 API Key"
+        tooltip = tr('隐藏 API Key') if is_hidden else tr('显示 API Key')
         set_codicon(self.toggle_key_btn, icon, point_size=12)
         self.toggle_key_btn.setToolTip(tooltip)
 
@@ -636,23 +652,23 @@ class RequestTemplateConfigDialog(QDialog):
             self._profile_keys[profile_id] = ""
             self._credential_dirty.add(profile_id)
             self._credential_delete.add(profile_id)
-        self.connection_status.setText("保存后将清除已存储的 API Key")
+        self.connection_status.setText(tr('保存后将清除已存储的 API Key'))
 
     def _test_connection(self):
         try:
             profile = self._current_profile_from_fields()
         except ValueError as error:
-            QMessageBox.warning(self, "配置不完整", str(error))
+            QMessageBox.warning(self, tr('配置不完整'), str(error))
             return
         api_key = self.api_key_input.text().strip()
         if not api_key:
-            QMessageBox.warning(self, "缺少 API Key", "请先输入 API Key。")
+            QMessageBox.warning(self, tr('缺少 API Key'), tr('请先输入 API Key。'))
             return
         if self._test_thread and self._test_thread.isRunning():
             return
 
         self.test_btn.setEnabled(False)
-        self.connection_status.setText("正在测试连接...")
+        self.connection_status.setText(tr('正在测试连接...'))
         self._test_thread = ApiConnectionTestThread(
             api_key,
             profile,
@@ -668,7 +684,7 @@ class RequestTemplateConfigDialog(QDialog):
 
     def _connection_test_failed(self, message):
         self.connection_status.setText(
-            "连接失败，可保存后实际调用："
+            tr('连接失败，可保存后实际调用：')
             + naturalize_display_text(str(message)[:180])
         )
 
@@ -677,13 +693,13 @@ class RequestTemplateConfigDialog(QDialog):
 
     def reject(self):
         if self._test_thread and self._test_thread.isRunning():
-            self.connection_status.setText("请等待连接测试完成后关闭窗口。")
+            self.connection_status.setText(tr('请等待连接测试完成后关闭窗口。'))
             return
         super().reject()
 
     def closeEvent(self, event):
         if self._test_thread and self._test_thread.isRunning():
-            self.connection_status.setText("请等待连接测试完成后关闭窗口。")
+            self.connection_status.setText(tr('请等待连接测试完成后关闭窗口。'))
             event.ignore()
             return
         super().closeEvent(event)
@@ -696,12 +712,15 @@ class RequestTemplateConfigDialog(QDialog):
         try:
             config = load_full_config()
         except Exception:
-            QMessageBox.warning(self, "警告", "无法读取配置文件，将使用默认值。")
+            QMessageBox.warning(self, tr('警告'), tr('无法读取配置文件，将使用默认值。'))
             config = {
                 "activeModelProfileId": "deepseek-default",
                 "modelProfiles": copy.deepcopy(list(DEFAULT_MODEL_PROFILES)),
             }
         self._config = copy.deepcopy(config)
+        self.language_combo.setCurrentIndex(
+            self.language_combo.findData(normalize_language(config.get("language")))
+        )
         self._profile_drafts = {
             str(item.get("id") or ""): copy.deepcopy(item)
             for item in config.get("modelProfiles", [])
@@ -809,7 +828,7 @@ class RequestTemplateConfigDialog(QDialog):
             self.preset_combo.setEditText(str(profile.get("model") or ""))
             line_edit = self.preset_combo.lineEdit()
             if line_edit is not None:
-                line_edit.setPlaceholderText("输入模型名称，例如 company-model")
+                line_edit.setPlaceholderText(tr('输入模型名称，例如 company-model'))
         self.preset_combo.blockSignals(False)
 
     def _on_provider_changed(self, _index):
@@ -828,18 +847,18 @@ class RequestTemplateConfigDialog(QDialog):
 
     def _add_custom_profile(self):
         profile_id = self._next_custom_profile_id()
-        suggested_name = f"自定义模型 {profile_id.rsplit('-', 1)[-1]}"
+        suggested_name = tr('自定义模型 {v0}', v0=profile_id.rsplit('-', 1)[-1])
         name, accepted = QInputDialog.getText(
             self,
-            "添加模型",
-            "配置名称：",
+            tr('添加模型'),
+            tr('配置名称：'),
             text=suggested_name,
         )
         if not accepted:
             return
         name = str(name or "").strip()
         if not name:
-            QMessageBox.warning(self, "配置不完整", "配置名称不能为空。")
+            QMessageBox.warning(self, tr('配置不完整'), tr('配置名称不能为空。'))
             return
 
         self._capture_current_profile()
@@ -883,8 +902,8 @@ class RequestTemplateConfigDialog(QDialog):
         name = str(profile.get("name") or profile_id)
         answer = QMessageBox.question(
             self,
-            "删除自定义模型",
-            f"确定删除“{name}”吗？\n保存后将同时删除该配置保存的 API Key。",
+            tr('删除自定义模型'),
+            tr('确定删除“{v0}”吗？\n保存后将同时删除该配置保存的 API Key。', v0=name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -982,10 +1001,10 @@ class RequestTemplateConfigDialog(QDialog):
         top_p = self.top_p_slider.value()
         effort = self.reasoning_effort_slider.value()
         self.temperature_value_label.setText(
-            "服务默认" if temperature < 0 else f"{temperature / 20.0:.2f}"
+            tr('服务默认') if temperature < 0 else f"{temperature / 20.0:.2f}"
         )
         self.top_p_value_label.setText(
-            "服务默认" if top_p < 0 else f"{top_p / 100.0:.2f}"
+            tr('服务默认') if top_p < 0 else f"{top_p / 100.0:.2f}"
         )
         self.reasoning_effort_value_label.setText(
             _REASONING_EFFORT_LABELS[effort]
@@ -1097,7 +1116,7 @@ class RequestTemplateConfigDialog(QDialog):
         profile_id = self._current_profile_id
         profile = copy.deepcopy(self._profile_drafts.get(profile_id) or {})
         if not profile:
-            raise ValueError("请选择模型 Profile。")
+            raise ValueError(tr('请选择模型 Profile。'))
         profile["baseUrl"] = self.url_input.text().strip()
         profile = self._profile_from_advanced_text(
             profile,
@@ -1112,23 +1131,23 @@ class RequestTemplateConfigDialog(QDialog):
     def _profile_from_advanced_text(profile, text):
         profile = copy.deepcopy(profile)
         if not profile["baseUrl"]:
-            raise ValueError(f"{profile.get('name') or profile.get('id')} 的 Base URL 不能为空。")
+            raise ValueError(tr('{v0} 的 Base URL 不能为空。', v0=profile.get('name') or profile.get('id')))
         if not profile["model"]:
-            raise ValueError(f"{profile.get('name') or profile.get('id')} 的模型名不能为空。")
+            raise ValueError(tr('{v0} 的模型名不能为空。', v0=profile.get('name') or profile.get('id')))
         try:
             advanced = json.loads(str(text or "").strip() or "{}")
         except json.JSONDecodeError as error:
-            raise ValueError(f"高级配置 JSON 格式错误：{error}") from error
+            raise ValueError(tr('高级配置 JSON 格式错误：{v0}', v0=error)) from error
         if not isinstance(advanced, dict):
-            raise ValueError("高级配置必须是 JSON 对象。")
+            raise ValueError(tr('高级配置必须是 JSON 对象。'))
         allowed = {"capabilities", "generationDefaults", "requestOverrides"}
         unknown = sorted(set(advanced).difference(allowed))
         if unknown:
-            raise ValueError("高级配置包含未知字段：" + "、".join(unknown))
+            raise ValueError(tr('高级配置包含未知字段：') + "、".join(unknown))
         for key in allowed:
             value = advanced.get(key, {})
             if not isinstance(value, dict):
-                raise ValueError(f"{key} 必须是 JSON 对象。")
+                raise ValueError(tr('{v0} 必须是 JSON 对象。', v0=key))
             profile[key] = copy.deepcopy(value)
         return profile
 
@@ -1136,22 +1155,21 @@ class RequestTemplateConfigDialog(QDialog):
         """显示当前 Profile 的适配器和参数优先级。"""
         profile = self._profile_drafts.get(self._current_profile_id) or {}
         input_mode = (
-            "支持文字与图片输入"
+            tr('支持文字与图片输入')
             if (profile.get("capabilities") or {}).get("multimodal")
-            else "仅支持文字输入"
+            else tr('仅支持文字输入')
         )
         self.hint_label.setText(
-            "参数优先级：适配器默认值 → Profile 默认值 → 工作流参数 → "
-            "能力约束 → 厂商扩展字段"
+            tr('参数优先级：适配器默认值 → Profile 默认值 → 工作流参数 → 能力约束 → 厂商扩展字段')
         )
         self.provider_label.setText(
-            "提供商："
+            tr('提供商：')
             + _PROVIDER_LABELS.get(
-                self._provider_key(profile), "自定义"
+                self._provider_key(profile), tr('自定义')
             )
-            + "；适配器："
+            + tr('；适配器：')
             + str(profile.get("adapter") or "openai_compatible")
-            + f"；{input_mode}；每个 Profile 使用独立的 Windows 凭据。"
+            + tr('；{v0}；每个 Profile 使用独立的 Windows 凭据。', v0=input_mode)
         )
         self._update_profile_actions()
 
@@ -1162,14 +1180,9 @@ class RequestTemplateConfigDialog(QDialog):
         try:
             selected_profile = self._current_profile_from_fields()
         except ValueError as error:
-            QMessageBox.critical(self, "配置错误", str(error))
+            QMessageBox.critical(self, tr('配置错误'), str(error))
             return
         api_key = self.api_key_input.text().strip()
-        if not api_key and self._current_profile_id not in self._credential_delete:
-            QMessageBox.warning(self, "警告", "API Key 不能为空。")
-            self.tabs.setCurrentWidget(self.basic_tab)
-            self.api_key_input.setFocus()
-            return
         self._profile_drafts[self._current_profile_id] = selected_profile
         self._profile_keys[self._current_profile_id] = api_key
         try:
@@ -1188,18 +1201,19 @@ class RequestTemplateConfigDialog(QDialog):
                 )
                 normalized_profiles.append(normalized)
         except ValueError as error:
-            QMessageBox.critical(self, "配置错误", str(error))
+            QMessageBox.critical(self, tr('配置错误'), str(error))
             return
         config = copy.deepcopy(self._config)
         config["activeModelProfileId"] = self._current_profile_id
         config["modelProfiles"] = normalized_profiles
+        config["language"] = normalize_language(self.language_combo.currentData())
 
         try:
             save_config(config)
         except Exception as e:
             QMessageBox.critical(
-                self, "保存失败",
-                f"无法写入配置文件:\n\n{str(e)}"
+                self, tr('保存失败'),
+                tr('无法写入配置文件:\n\n{v0}', v0=str(e))
             )
             return
 
@@ -1218,12 +1232,13 @@ class RequestTemplateConfigDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(
                 self,
-                "密钥保存失败",
-                "无法写入 Windows 凭据管理器：\n\n" + str(e),
+                tr('密钥保存失败'),
+                tr('无法写入 Windows 凭据管理器：\n\n') + str(e),
             )
             return
 
         self._config = config
         self._saved_template_text = self.template_edit.toPlainText()
         self.api_key_configured = bool(api_key)
+        set_language(config["language"])
         self.accept()

@@ -1,7 +1,5 @@
-"""
-SFC 顺序功能图编辑器 — 步骤 + 转移条件 交替的流程图编辑器。
-双击步骤/条件 → 快速编辑名称；右键 → 高级编辑。
-"""
+"""SFC editor with alternating steps and transition conditions."""
+from i18n import tr
 import json, re, random
 from typing import Optional
 from qt_compat import (
@@ -168,10 +166,10 @@ class SFCMessageDialog(SFCDialog):
         actions = QHBoxLayout()
         actions.addStretch()
         if question:
-            cancel = QPushButton("取消")
+            cancel = QPushButton(tr('取消'))
             cancel.clicked.connect(self.reject)
             actions.addWidget(cancel)
-        confirm = QPushButton("确定")
+        confirm = QPushButton(tr('确定'))
         confirm.setObjectName("DangerButton" if question else "PrimaryButton")
         confirm.clicked.connect(self.accept)
         actions.addWidget(confirm)
@@ -190,7 +188,7 @@ class SFCFileDialog(SFCDialog):
         self.picker = QFileDialog(self)
         self.picker.setOption(QFileDialog.Option.DontUseNativeDialog, True)
         self.picker.setWindowFlags(Qt.WindowType.Widget)
-        self.picker.setNameFilters(["SFC 文件 (*.sfc)", "所有文件 (*)"])
+        self.picker.setNameFilters([tr('SFC 文件 (*.sfc)'), tr('所有文件 (*)')])
         if save:
             self.picker.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
             self.picker.selectFile(initial or "control_flow.sfc")
@@ -207,8 +205,8 @@ class SFCFileDialog(SFCDialog):
         return paths[0] if paths else ""
 
 PALETTE_ITEMS = [
-    {"type": "step",       "label": "步骤",       "icon": "symbol-field", "hint": "执行动作。双击编辑名称，右键高级编辑"},
-    {"type": "transition", "label": "转移条件",   "icon": "arrow-right", "hint": "进入下一步的条件。双击编辑条件"},
+    {"type": "step",       "label": tr('步骤'),       "icon": "symbol-field", "hint": tr('执行动作。双击编辑名称，右键高级编辑')},
+    {"type": "transition", "label": tr('转移条件'),   "icon": "arrow-right", "hint": tr('进入下一步的条件。双击编辑条件')},
 ]
 
 # ═══════════════════ Port ═══════════════════
@@ -328,26 +326,26 @@ class SFCConnection(QGraphicsPathItem):
 # ═══════════════════ I/O Config Dialog ═══════════════════
 class IOConfigDialog(SFCDialog):
     def __init__(self, io_config: dict, parent=None):
-        super().__init__("I/O 硬件映射配置", parent, "settings-gear")
+        super().__init__(tr('I/O 硬件映射配置'), parent, "settings-gear")
         self.setMinimumWidth(560)
         self.io_config = io_config
         layout = self.content_layout
-        layout.addWidget(QLabel("定义 PLC 项目的输入/输出信号。配置后编辑步骤时可下拉选择。"))
+        layout.addWidget(QLabel(tr('定义 PLC 项目的输入/输出信号。配置后编辑步骤时可下拉选择。')))
         self.input_editors, self.output_editors, self.reg_editors = [], [], []
         def make_group(title, editors, key, prefix, layout):
             g = QGroupBox(title); gl = QFormLayout(g)
             for addr, desc in io_config.get(key, {}).items():
                 self._row(gl, addr, desc, prefix, editors)
             g.setLayout(gl); layout.addWidget(g)
-            btn = QPushButton(f"+ 添加{prefix}")
+            btn = QPushButton(tr('+ 添加{v0}', v0=prefix))
             btn.clicked.connect(lambda: self._add_new(gl, prefix, editors, key))
             layout.addWidget(btn)
             return gl
-        make_group("X 触点", self.input_editors, "inputs", "X", layout)
-        make_group("Y 触点", self.output_editors, "outputs", "Y", layout)
-        make_group("D/T 寄存器/定时器", self.reg_editors, "registers", "D/T", layout)
+        make_group(tr('X 触点'), self.input_editors, "inputs", "X", layout)
+        make_group(tr('Y 触点'), self.output_editors, "outputs", "Y", layout)
+        make_group(tr('D/T 寄存器/定时器'), self.reg_editors, "registers", "D/T", layout)
         btns = QHBoxLayout()
-        ok = QPushButton("确定"); cancel = QPushButton("取消")
+        ok = QPushButton(tr('确定')); cancel = QPushButton(tr('取消'))
         ok.setObjectName("PrimaryButton")
         ok.clicked.connect(self._save); cancel.clicked.connect(self.reject)
         btns.addStretch(); btns.addWidget(ok); btns.addWidget(cancel); layout.addLayout(btns)
@@ -356,7 +354,7 @@ class IOConfigDialog(SFCDialog):
         ae = QLineEdit(addr); ae.setFixedWidth(80); de = QLineEdit(desc)
         w = QWidget(); rl = QHBoxLayout(w); rl.setContentsMargins(0, 0, 0, 0)
         rl.addWidget(ae); rl.addWidget(de)
-        btn_del = QPushButton("删除")
+        btn_del = QPushButton(tr('删除'))
         btn_del.setObjectName("DangerButton")
         row_data = (ae, de)
         btn_del.clicked.connect(lambda checked, rw=w, rl=layout, rd=row_data, ed=editors: self._delete_row(rw, rl, rd, ed))
@@ -586,7 +584,7 @@ class SFCBlockPalette(QListWidget):
 # ═══════════════════ SFC -> Text ═══════════════════
 def _clean(v):
     v = v.strip()
-    return None if (not v or v == "（请先配置 I/O）") else v
+    return None if (not v or v == tr('（请先配置 I/O）')) else v
 
 def sfc_to_text(scene: SFCScene, io_config: Optional[dict] = None) -> str:
     """将 SFC 流程图转换为结构化文本描述"""
@@ -599,7 +597,7 @@ def sfc_to_text(scene: SFCScene, io_config: Optional[dict] = None) -> str:
     def prev_blocks(blk):
         return [c.source_block for c in conns if c.target_block is blk]
     def label_of(blk):
-        return blk.text_item.toPlainText().strip() or "（未命名）"
+        return blk.text_item.toPlainText().strip() or tr('（未命名）')
 
     # 找入口
     roots = [b for b in blocks if not prev_blocks(b)]
@@ -611,10 +609,10 @@ def sfc_to_text(scene: SFCScene, io_config: Optional[dict] = None) -> str:
         for key, lbl in [("inputs","X"),("outputs","Y"),("registers","D/T")]:
             for addr,desc in io_config.get(key,{}).items():
                 lines.append(f"  {lbl}{addr}" + (f"（{desc}）" if desc and desc!=addr else ""))
-        if lines: lines.insert(0,"【硬件映射】"); lines.append("")
+        if lines: lines.insert(0,tr('【硬件映射】')); lines.append("")
 
     visited, step_num = set(), [0]
-    lines.append("【步进控制逻辑】"); lines.append("")
+    lines.append(tr('【步进控制逻辑】')); lines.append("")
 
     def traverse(start, indent=""):
         queue = [start]
@@ -628,9 +626,9 @@ def sfc_to_text(scene: SFCScene, io_config: Optional[dict] = None) -> str:
                 lines.append(f"{indent}S{step_num[0]}：{label}")
                 nxt = next_blocks(blk)
                 if len(nxt) > 1:
-                    lines.append(f"{indent}  [并行分支]")
+                    lines.append(tr('{v0}  [并行分支]', v0=indent))
                     for i,n in enumerate(nxt):
-                        lines.append(f"{indent}  子路径{i+1}：")
+                        lines.append(tr('{v0}  子路径{v1}：', v0=indent, v1=i + 1))
                         sub_q = [n]; sub_d = 0
                         while sub_q and sub_d < 10:
                             cur = sub_q.pop(0)
@@ -645,11 +643,11 @@ def sfc_to_text(scene: SFCScene, io_config: Optional[dict] = None) -> str:
                             for nn in next_blocks(cur):
                                 if nn not in visited: sub_q.append(nn)
                             sub_d += 1
-                    lines.append(f"{indent}  [汇合]")
+                    lines.append(tr('{v0}  [汇合]', v0=indent))
                 elif len(nxt) == 1:
                     queue.append(nxt[0])
             else:
-                lines.append(f"{indent}  → 条件：{label}")
+                lines.append(tr('{v0}  → 条件：{v1}', v0=indent, v1=label))
                 for n in next_blocks(blk):
                     if n not in visited: queue.append(n)
 
@@ -657,24 +655,24 @@ def sfc_to_text(scene: SFCScene, io_config: Optional[dict] = None) -> str:
         if root not in visited: traverse(root)
 
     lines.append("")
-    lines.append("请根据以上步进控制逻辑生成完整的梯形图 JSON。")
+    lines.append(tr('请根据以上步进控制逻辑生成完整的梯形图 JSON。'))
     return "\n".join(lines)
 # ═══════════════════ Block Edit Dialog (Advanced) ═══════════════════
 class BlockEditDialog(SFCDialog):
     def __init__(self, block: SFCBlock, io_config: dict, parent=None):
-        super().__init__("高级编辑", parent, "tools")
+        super().__init__(tr('高级编辑'), parent, "tools")
         self.block = block; self.io_config = io_config
         self.setMinimumWidth(520)
         layout = self.content_layout
-        layout.addWidget(QLabel("名称："))
+        layout.addWidget(QLabel(tr('名称：')))
         self.name_edit = QLineEdit(block.text_item.toPlainText().strip()); layout.addWidget(self.name_edit)
 
-        layout.addWidget(QLabel("动作描述："))
+        layout.addWidget(QLabel(tr('动作描述：')))
         self.action_edit = QTextEdit(); self.action_edit.setMaximumHeight(80)
         desc = block.properties.get("action", "") or block.properties.get("condition", "")
         self.action_edit.setPlainText(desc); layout.addWidget(self.action_edit)
         io_row = QHBoxLayout()
-        for title, key in [("Y 触点", "outputs"), ("T/D 定时器/寄存器", "timers"), ("X 触点", "inputs")]:
+        for title, key in [(tr('Y 触点'), "outputs"), (tr('T/D 定时器/寄存器'), "timers"), (tr('X 触点'), "inputs")]:
             g = QGroupBox(title); gl = QVBoxLayout(g)
             cb = BorderedComboBox(); cb.setProperty("darkTheme", self._theme == ThemeMode.DARK)
             cb.setEditable(True); cb.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
@@ -693,7 +691,7 @@ class BlockEditDialog(SFCDialog):
         layout.addLayout(io_row)
 
         btns = QHBoxLayout()
-        ok = QPushButton("确定"); cancel = QPushButton("取消")
+        ok = QPushButton(tr('确定')); cancel = QPushButton(tr('取消'))
         ok.setObjectName("PrimaryButton")
         ok.clicked.connect(self._save); cancel.clicked.connect(self.reject)
         btns.addStretch(); btns.addWidget(ok); btns.addWidget(cancel); layout.addLayout(btns)
@@ -708,28 +706,28 @@ class BlockEditDialog(SFCDialog):
         for key in ["outputs", "timers", "inputs"]:
             v = getattr(self, f"{key}_combo").currentText().strip()
             if " — " in v: v = v.split(" — ")[0]
-            b.properties[key] = "" if v in ("（请先配置 I/O）", "") else v
+            b.properties[key] = "" if v in (tr('（请先配置 I/O）'), "") else v
         self.accept()
 
 # ═══════════════════ Quick Edit Dialog ═══════════════════
 class QuickEditDialog(SFCDialog):
     """简易编辑对话框 — 与主应用一致的配色。"""
     def __init__(self, block: SFCBlock, parent=None):
-        super().__init__("快速编辑", parent, "edit")
+        super().__init__(tr('快速编辑'), parent, "edit")
         self.block = block
         self.setMinimumWidth(440)
         layout = self.content_layout
         cur = block.text_item.toPlainText().strip()
         defaults = {"新步骤": "", "转移条件": ""}
         cur = "" if cur in defaults else cur
-        layout.addWidget(QLabel("名称："))
+        layout.addWidget(QLabel(tr('名称：')))
         self.name_edit = QLineEdit(cur); layout.addWidget(self.name_edit)
-        layout.addWidget(QLabel("描述（可选）："))
+        layout.addWidget(QLabel(tr('描述（可选）：')))
         self.desc_edit = QTextEdit(); self.desc_edit.setMaximumHeight(60)
         self.desc_edit.setPlainText(block.properties.get("action", "") or block.properties.get("condition", ""))
         layout.addWidget(self.desc_edit)
         btns = QHBoxLayout()
-        ok = QPushButton("确定"); cancel = QPushButton("取消")
+        ok = QPushButton(tr('确定')); cancel = QPushButton(tr('取消'))
         ok.setObjectName("PrimaryButton")
         ok.clicked.connect(self._save); cancel.clicked.connect(self.reject)
         btns.addStretch(); btns.addWidget(ok); btns.addWidget(cancel); layout.addLayout(btns)
@@ -790,28 +788,28 @@ class SFCEditorWidget(QWidget):
             QToolBar::separator {{ background: #3c3c3c; width: 1px; margin: 4px; }}
         """)
         tb.addAction(
-            codicon_icon("file-text"), "转为文本描述"
+            codicon_icon("file-text"), tr('转为文本描述')
         ).triggered.connect(self._convert)
         tb.addSeparator()
         tb.addAction(
-            codicon_icon("clear-all"), "清空画布"
+            codicon_icon("clear-all"), tr('清空画布')
         ).triggered.connect(self._clear)
         tb.addAction(
-            codicon_icon("tools"), "I/O 配置"
+            codicon_icon("tools"), tr('I/O 配置')
         ).triggered.connect(self._io_config)
         tb.addSeparator()
         tb.addAction(
-            codicon_icon("save"), "保存"
+            codicon_icon("save"), tr('保存')
         ).triggered.connect(self._save_file)
         tb.addAction(
-            codicon_icon("folder-opened"), "打开"
+            codicon_icon("folder-opened"), tr('打开')
         ).triggered.connect(self._load_file)
         self._fs_act = tb.addAction(
-            codicon_icon("screen-full"), "全屏绘制"
+            codicon_icon("screen-full"), tr('全屏绘制')
         )
         self._fs_act.triggered.connect(self._fs_toggle)
         tb.addSeparator()
-        tb.addWidget(QLabel("双击编辑名称 | 右键高级编辑 | 拖底部圆点连线 | Ctrl+拖拽平移 | 滚轮缩放"))
+        tb.addWidget(QLabel(tr('双击编辑名称 | 右键高级编辑 | 拖底部圆点连线 | Ctrl+拖拽平移 | 滚轮缩放')))
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.setHandleWidth(0)
@@ -866,7 +864,7 @@ class SFCEditorWidget(QWidget):
 
     # ── Block management ──
     def add_block_at(self, bt, x, y):
-        b = SFCStepBlock("新步骤", x, y) if bt == "step" else SFCTransitionBlock("转移条件", x, y)
+        b = SFCStepBlock(tr('新步骤'), x, y) if bt == "step" else SFCTransitionBlock(tr('转移条件'), x, y)
         self.scene.clearSelection(); self.scene.addItem(b); b.setSelected(True)
         self._quick_edit(b)
 
@@ -921,7 +919,7 @@ class SFCEditorWidget(QWidget):
 
     def _change_conn_color(self, conn):
         from qt_compat import QColorDialog
-        wrapper = SFCDialog("选择连线颜色", self, "paintcan")
+        wrapper = SFCDialog(tr('选择连线颜色'), self, "paintcan")
         wrapper.resize(620, 500)
         dlg = QColorDialog(conn._color, wrapper)
         dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
@@ -929,24 +927,24 @@ class SFCEditorWidget(QWidget):
         wrapper.content_layout.setContentsMargins(8, 8, 8, 8)
         wrapper.content_layout.addWidget(dlg)
         bb = dlg.findChild(QDialogButtonBox)
-        bb.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
-        bb.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText(tr('确定'))
+        bb.button(QDialogButtonBox.StandardButton.Cancel).setText(tr('取消'))
         bb.button(QDialogButtonBox.StandardButton.Ok).setObjectName("PrimaryButton")
         MAP = {
-            "&Pick Screen Color": "取屏幕颜色",
-            "Pick Screen Color": "取屏幕颜色",
-            "&Add to Custom Colors": "添加到自定义颜色",
-            "Add to Custom Colors": "添加到自定义颜色",
-            "&Reset": "重置", "Reset": "重置",
-            "Basic &colors": "基本颜色", "Basic colors": "基本颜色",
-            "&Custom colors": "自定义颜色", "Custom colors": "自定义颜色",
-            "Hu&e:": "色调(&E):", "Hue:": "色调:",
-            "&Sat:": "饱和度(&S):", "Sat:": "饱和度:",
-            "&Val:": "亮度(&V):", "Val:": "亮度:",
-            "&Red:": "红(&R):", "Red:": "红:",
-            "&Green:": "绿(&G):", "Green:": "绿:",
-            "&Blue:": "蓝(&B):", "Blue:": "蓝:",
-            "A&lpha:": "透明度(&L):", "Alpha:": "透明度:",
+            "&Pick Screen Color": tr('取屏幕颜色'),
+            "Pick Screen Color": tr('取屏幕颜色'),
+            "&Add to Custom Colors": tr('添加到自定义颜色'),
+            "Add to Custom Colors": tr('添加到自定义颜色'),
+            "&Reset": tr('重置'), "Reset": tr('重置'),
+            "Basic &colors": tr('基本颜色'), "Basic colors": tr('基本颜色'),
+            "&Custom colors": tr('自定义颜色'), "Custom colors": tr('自定义颜色'),
+            "Hu&e:": tr('色调(&E):'), "Hue:": tr('色调:'),
+            "&Sat:": tr('饱和度(&S):'), "Sat:": tr('饱和度:'),
+            "&Val:": tr('亮度(&V):'), "Val:": tr('亮度:'),
+            "&Red:": tr('红(&R):'), "Red:": tr('红:'),
+            "&Green:": tr('绿(&G):'), "Green:": tr('绿:'),
+            "&Blue:": tr('蓝(&B):'), "Blue:": tr('蓝:'),
+            "A&lpha:": tr('透明度(&L):'), "Alpha:": tr('透明度:'),
             "&HTML:": "HTML(&H):", "HTML:": "HTML:",
         }
         for w in dlg.findChildren(QPushButton) + dlg.findChildren(QLabel):
@@ -1114,13 +1112,13 @@ class SFCEditorWidget(QWidget):
 
     def _clear(self):
         if show_sfc_message(
-            self, "清空画布", "确定清空当前画布吗？此操作无法撤销。",
+            self, tr('清空画布'), tr('确定清空当前画布吗？此操作无法撤销。'),
             kind="warning", question=True,
         ):
             self.scene.clear()
 
     def _save_file(self):
-        dialog = SFCFileDialog("保存流程图", save=True, initial="control_flow.sfc", parent=self)
+        dialog = SFCFileDialog(tr('保存流程图'), save=True, initial="control_flow.sfc", parent=self)
         path = dialog.selected_path() if dialog.exec() == QDialog.DialogCode.Accepted else ""
         if not path: return
         data = {"version": 1, "io_config": self.io_config, "blocks": [], "connections": []}
@@ -1143,10 +1141,10 @@ class SFCEditorWidget(QWidget):
                     data["connections"].append({"source_id": sid, "target_id": tid})
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        show_sfc_message(self, "保存成功", f"流程图已保存至：\n{path}")
+        show_sfc_message(self, tr('保存成功'), tr('流程图已保存至：\n{v0}', v0=path))
 
     def _load_file(self):
-        dialog = SFCFileDialog("打开流程图", parent=self)
+        dialog = SFCFileDialog(tr('打开流程图'), parent=self)
         path = dialog.selected_path() if dialog.exec() == QDialog.DialogCode.Accepted else ""
         if not path: return
         with open(path, "r", encoding="utf-8") as f:
@@ -1167,7 +1165,7 @@ class SFCEditorWidget(QWidget):
                 self.scene.addItem(conn)
                 conn.update_path()
         self.scene.update()
-        show_sfc_message(self, "打开成功", f"流程图已加载：\n{path}")
+        show_sfc_message(self, tr('打开成功'), tr('流程图已加载：\n{v0}', v0=path))
 
     def _io_config(self):
         IOConfigDialog(self.io_config, self).exec()
@@ -1176,9 +1174,9 @@ class SFCEditorWidget(QWidget):
         t = sfc_to_text(self.scene, self.io_config)
         if t.strip():
             self.text_generated.emit(t)
-            show_sfc_message(self, "转换完成", "已转入文本输入框。")
+            show_sfc_message(self, tr('转换完成'), tr('已转入文本输入框。'))
         else:
-            show_sfc_message(self, "画布为空", "请先添加步骤和转移条件。", "warning")
+            show_sfc_message(self, tr('画布为空'), tr('请先添加步骤和转移条件。'), "warning")
 
     # ── Fullscreen ──
     def _fs_toggle(self):
@@ -1192,11 +1190,11 @@ class SFCEditorWidget(QWidget):
                 QPushButton:hover { background: %(accent)s; }
             """ % colors)
             self._fs_dialog.showFullScreen()
-            cb = QPushButton("退出全屏")
-            set_codicon(cb, "screen-normal", "退出全屏", 10)
+            cb = QPushButton(tr('退出全屏'))
+            set_codicon(cb, "screen-normal", tr('退出全屏'), 10)
             cb.setObjectName("PrimaryButton")
             cb.clicked.connect(self._fs_toggle); cb.setFixedHeight(36)
-            top = QHBoxLayout(); top.addWidget(QLabel("  全屏绘制 | Ctrl+拖拽平移 | 拖底部圆点连线 | 双击编辑 | 右键高级")); top.addStretch(); top.addWidget(cb)
+            top = QHBoxLayout(); top.addWidget(QLabel(tr('  全屏绘制 | Ctrl+拖拽平移 | 拖底部圆点连线 | 双击编辑 | 右键高级'))); top.addStretch(); top.addWidget(cb)
             fsv = SFCView(self.scene); fsv._editor_ref = self; fsv.setAcceptDrops(True)
             fsv.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             fsv.customContextMenuRequested.connect(lambda qp: self._show_context_menu(fsv.mapToScene(qp), fsv))
@@ -1207,11 +1205,11 @@ class SFCEditorWidget(QWidget):
             fl = QVBoxLayout(self._fs_dialog); fl.setContentsMargins(8, 8, 8, 8); fl.setSpacing(4)
             fl.addLayout(top); fl.addWidget(sp, stretch=1)
             self._fs_act.setIcon(codicon_icon("screen-normal"))
-            self._fs_act.setText("退出全屏")
+            self._fs_act.setText(tr('退出全屏'))
         else:
             self._fs_dialog.close(); self._fs_dialog = None
             self._fs_act.setIcon(codicon_icon("screen-full"))
-            self._fs_act.setText("全屏绘制")
+            self._fs_act.setText(tr('全屏绘制'))
 
     def _show_context_menu(self, scene_pos: QPointF, view: SFCView = None):
         """在场景坐标 scene_pos 处弹出右键菜单。view 用于坐标映射（默认主视图）。"""
@@ -1238,21 +1236,21 @@ class SFCEditorWidget(QWidget):
             QMenu::separator { height: 1px; margin: 4px 7px; background: %(border)s; }
         """ % colors)
         if blk:
-            menu.addAction(codicon_icon("edit"), "编辑名称").triggered.connect(lambda: self._quick_edit(blk))
-            menu.addAction(codicon_icon("tools"), "高级编辑").triggered.connect(lambda: self._edit_block(blk))
+            menu.addAction(codicon_icon("edit"), tr('编辑名称')).triggered.connect(lambda: self._quick_edit(blk))
+            menu.addAction(codicon_icon("tools"), tr('高级编辑')).triggered.connect(lambda: self._edit_block(blk))
             menu.addSeparator()
-            menu.addAction(codicon_icon("copy"), "复制\tCtrl+C").triggered.connect(self._copy)
-            menu.addAction(codicon_icon("edit"), "剪切\tCtrl+X").triggered.connect(self._cut)
+            menu.addAction(codicon_icon("copy"), tr('复制\tCtrl+C')).triggered.connect(self._copy)
+            menu.addAction(codicon_icon("edit"), tr('剪切\tCtrl+X')).triggered.connect(self._cut)
             menu.addSeparator()
-            menu.addAction(codicon_icon("trash"), "删除").triggered.connect(lambda: self._del_block(blk))
+            menu.addAction(codicon_icon("trash"), tr('删除')).triggered.connect(lambda: self._del_block(blk))
         elif conn:
-            menu.addAction(codicon_icon("paintcan"), "改变颜色").triggered.connect(lambda: self._change_conn_color(conn))
-            menu.addAction(codicon_icon("trash"), "删除连线").triggered.connect(lambda: self.scene.removeItem(conn))
+            menu.addAction(codicon_icon("paintcan"), tr('改变颜色')).triggered.connect(lambda: self._change_conn_color(conn))
+            menu.addAction(codicon_icon("trash"), tr('删除连线')).triggered.connect(lambda: self.scene.removeItem(conn))
         else:
-            menu.addAction(codicon_icon("copy"), "粘贴\tCtrl+V").triggered.connect(self._paste)
+            menu.addAction(codicon_icon("copy"), tr('粘贴\tCtrl+V')).triggered.connect(self._paste)
             menu.addSeparator()
-            menu.addAction(codicon_icon("symbol-field"), "在此添加步骤").triggered.connect(lambda: self.add_block_at("step", scene_pos.x(), scene_pos.y()))
-            menu.addAction(codicon_icon("arrow-right"), "在此添加转移条件").triggered.connect(lambda: self.add_block_at("transition", scene_pos.x(), scene_pos.y()))
+            menu.addAction(codicon_icon("symbol-field"), tr('在此添加步骤')).triggered.connect(lambda: self.add_block_at("step", scene_pos.x(), scene_pos.y()))
+            menu.addAction(codicon_icon("arrow-right"), tr('在此添加转移条件')).triggered.connect(lambda: self.add_block_at("transition", scene_pos.x(), scene_pos.y()))
         vp = view.mapFromScene(scene_pos)
         menu.exec(view.viewport().mapToGlobal(vp))
 

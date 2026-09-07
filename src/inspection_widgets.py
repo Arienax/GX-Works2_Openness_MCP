@@ -8,6 +8,8 @@ without coupling the widgets to a particular model implementation.
 
 from __future__ import annotations
 
+from i18n import tr
+
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 
@@ -109,7 +111,7 @@ def _string_list(value):
                 if address and address not in rendered:
                     rendered = f"{address}：{rendered}"
                 if expected:
-                    rendered += f"（期望：{expected}）"
+                    rendered += tr('（期望：{v0}）', v0=expected)
                 result.append(rendered)
             elif str(item).strip():
                 result.append(str(item))
@@ -162,11 +164,11 @@ def _is_safety_finding(finding):
     return any(
         term in haystack
         for term in (
-            "急停",
-            "安全门",
-            "安全回路",
-            "安全类",
-            "限位",
+            tr('急停'),
+            tr('安全门'),
+            tr('安全回路'),
+            tr('安全类'),
+            tr('限位'),
             "emergency stop",
             "safety gate",
             "safety circuit",
@@ -228,8 +230,8 @@ def _normalise_finding(raw, index, legacy=False):
         "id": str(finding_id),
         "source": _enum_text(finding.get("source") or ("legacy" if legacy else "local")),
         "severity": severity,
-        "category": str(finding.get("category") or "通用检查"),
-        "title": str(_first(finding, "title", "message", default=f"问题 {index + 1}")),
+        "category": str(finding.get("category") or tr('通用检查')),
+        "title": str(_first(finding, "title", "message", default=tr('问题 {v0}', v0=index + 1))),
         "evidence": evidence,
         "suggestion": suggestion,
         "rung_id": rung,
@@ -266,14 +268,14 @@ def normalise_inspection_report(report):
 
         if data.get("needs_fix") or data.get("possible_causes") or data.get("recommended_changes"):
             rungs = data.get("related_rungs") or []
-            summary = str(data.get("summary") or "旧版故障调试结果")
+            summary = str(data.get("summary") or tr('旧版故障调试结果'))
             causes = _string_list(data.get("possible_causes"))
             changes = _string_list(data.get("recommended_changes"))
             legacy_item = {
                 "id": "legacy-debug-finding",
                 "source": "ai",
                 "severity": "warning" if data.get("needs_fix") else "info",
-                "category": "故障诊断",
+                "category": tr('故障诊断'),
                 "title": summary,
                 "evidence": "；".join(causes) or summary,
                 "suggestion": "；".join(changes),
@@ -316,7 +318,7 @@ def normalise_inspection_report(report):
             or ""
         ),
         "plc_model": str(data.get("plc_model") or nested_base.get("plc_model") or ""),
-        "summary": str(data.get("summary") or "未提供报告摘要"),
+        "summary": str(data.get("summary") or tr('未提供报告摘要')),
         "findings": normalised,
     }
 
@@ -339,12 +341,12 @@ class _FindingWidget(QFrame):
         if finding.get("fixable"):
             self.checkbox = QCheckBox()
             self.checkbox.setObjectName("FindingCheckBox")
-            self.checkbox.setToolTip("选择后可生成修复版本；默认不选择")
+            self.checkbox.setToolTip(tr('选择后可生成修复版本；默认不选择'))
             self.checkbox.stateChanged.connect(lambda _state: self.selection_changed.emit())
             header.addWidget(self.checkbox)
         title = QLabel(
             naturalize_display_text(
-                finding.get("title") or finding.get("category") or "未命名问题"
+                finding.get("title") or finding.get("category") or tr('未命名问题')
             )
         )
         title.setObjectName("FindingTitle")
@@ -359,9 +361,9 @@ class _FindingWidget(QFrame):
         if finding.get("category"):
             meta.append(category_label(finding["category"]))
         if finding.get("confidence"):
-            meta.append(f"置信度 {confidence_label(finding['confidence'])}")
+            meta.append(tr('置信度 {v0}', v0=confidence_label(finding['confidence'])))
         if finding.get("resolution_status"):
-            meta.append(f"状态 {resolution_label(finding['resolution_status'])}")
+            meta.append(tr('状态 {v0}', v0=resolution_label(finding['resolution_status'])))
         self.meta_label = None
         if meta:
             self.meta_label = QLabel(" · ".join(meta))
@@ -383,9 +385,9 @@ class _FindingWidget(QFrame):
             layout.addWidget(self.evidence_label)
             if len(self._evidence_lines) > self.EVIDENCE_PREVIEW_LIMIT:
                 hidden_count = len(self._evidence_lines) - self.EVIDENCE_PREVIEW_LIMIT
-                self.evidence_toggle_button = QPushButton(f"展开其余 {hidden_count} 处")
+                self.evidence_toggle_button = QPushButton(tr('展开其余 {v0} 处', v0=hidden_count))
                 self.evidence_toggle_button.setObjectName("SecondaryButton")
-                self.evidence_toggle_button.setToolTip("展开或收起全部证据位置")
+                self.evidence_toggle_button.setToolTip(tr('展开或收起全部证据位置'))
                 self.evidence_toggle_button.setSizePolicy(
                     QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
                 )
@@ -400,7 +402,7 @@ class _FindingWidget(QFrame):
         suggestion = _evidence_text(finding.get("suggestion"))
         if suggestion:
             suggestion_label = QLabel(
-                f"建议：{naturalize_display_text(suggestion)}"
+                tr('建议：{v0}', v0=naturalize_display_text(suggestion))
             )
             suggestion_label.setObjectName("FindingSuggestion")
             suggestion_label.setWordWrap(True)
@@ -421,9 +423,9 @@ class _FindingWidget(QFrame):
                 self.location_label.setToolTip(tooltip)
             location_row.addWidget(self.location_label, 1)
             if rung or path:
-                self.locate_button = QPushButton("定位")
+                self.locate_button = QPushButton(tr('定位'))
                 self.locate_button.setObjectName("SecondaryButton")
-                set_codicon(self.locate_button, "preview", "定位", 8)
+                set_codicon(self.locate_button, "preview", tr('定位'), 8)
                 self.locate_button.clicked.connect(
                     lambda: self.locate_clicked.emit(str(rung or ""), str(path or ""))
                 )
@@ -440,16 +442,16 @@ class _FindingWidget(QFrame):
         limit = len(self._evidence_lines) if self._evidence_expanded else self.EVIDENCE_PREVIEW_LIMIT
         visible = self._evidence_lines[:limit]
         if len(visible) == 1:
-            rendered = "证据：" + visible[0]
+            rendered = tr('证据：') + visible[0]
         else:
-            rendered = "证据：\n" + "\n".join("• " + item for item in visible)
+            rendered = tr('证据：\n') + "\n".join("• " + item for item in visible)
         self.evidence_label.setText(rendered)
         if self.evidence_toggle_button is not None:
             if self._evidence_expanded:
-                self.evidence_toggle_button.setText("收起证据")
+                self.evidence_toggle_button.setText(tr('收起证据'))
             else:
                 hidden_count = len(self._evidence_lines) - self.EVIDENCE_PREVIEW_LIMIT
-                self.evidence_toggle_button.setText(f"展开其余 {hidden_count} 处")
+                self.evidence_toggle_button.setText(tr('展开其余 {v0} 处', v0=hidden_count))
 
     def _toggle_evidence(self):
         self._evidence_expanded = not self._evidence_expanded
@@ -471,18 +473,18 @@ class InspectionReportCard(QFrame):
     copy_fix_requested = pyqtSignal(str)
 
     STATUS_TEXT = {
-        "complete": "已完成",
-        "completed": "已完成",
-        "success": "已完成",
-        "local_only": "仅本地",
-        "local": "仅本地",
-        "partial": "部分完成",
-        "partially_complete": "部分完成",
-        "failed": "执行失败",
-        "error": "执行失败",
-        "running": "检查中",
-        "pending": "等待检查",
-        "unsupported": "当前类型不支持",
+        "complete": tr('已完成'),
+        "completed": tr('已完成'),
+        "success": tr('已完成'),
+        "local_only": tr('仅本地'),
+        "local": tr('仅本地'),
+        "partial": tr('部分完成'),
+        "partially_complete": tr('部分完成'),
+        "failed": tr('执行失败'),
+        "error": tr('执行失败'),
+        "running": tr('检查中'),
+        "pending": tr('等待检查'),
+        "unsupported": tr('当前类型不支持'),
     }
 
     def __init__(
@@ -531,7 +533,7 @@ class InspectionReportCard(QFrame):
 
         header = QHBoxLayout()
         report_type = self.report.get("report_type", "")
-        title_text = "故障调试报告" if "debug" in report_type or "fault" in report_type else "版本评审报告"
+        title_text = tr('故障调试报告') if "debug" in report_type or "fault" in report_type else tr('版本评审报告')
         self.title_label = QLabel(title_text)
         self.title_label.setObjectName("InspectionTitle")
         header.addWidget(self.title_label)
@@ -539,13 +541,13 @@ class InspectionReportCard(QFrame):
         model = self.report.get("plc_model")
         version_label = version_display_name(version)
         target = f"{version_label} · {model}" if model else version_label
-        self.version_badge = QLabel(f"基于 {target}")
+        self.version_badge = QLabel(tr('基于 {v0}', v0=target))
         self.version_badge.setObjectName("InspectionBadge")
         header.addWidget(self.version_badge)
         header.addStretch()
         status = self.STATUS_TEXT.get(
             self.report.get("status"),
-            naturalize_identifier(self.report.get("status"), kind="未知"),
+            naturalize_identifier(self.report.get("status"), kind=tr('未知')),
         )
         self.status_label = QLabel(status)
         self.status_label.setObjectName("InspectionStatus")
@@ -554,14 +556,14 @@ class InspectionReportCard(QFrame):
 
         hash_value = self.report.get("base_json_hash")
         if hash_value:
-            hash_label = QLabel("程序内容：已与该版本精确绑定")
+            hash_label = QLabel(tr('程序内容：已与该版本精确绑定'))
             hash_label.setObjectName("InspectionHash")
             hash_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             layout.addWidget(hash_label)
 
         self.summary_label = QLabel(
             naturalize_display_text(
-                self.report.get("summary") or "未提供报告摘要"
+                self.report.get("summary") or tr('未提供报告摘要')
             )
         )
         self.summary_label.setObjectName("InspectionSummary")
@@ -570,38 +572,38 @@ class InspectionReportCard(QFrame):
         layout.addWidget(self.summary_label)
 
         trigger_text = {
-            "automatic": "自动基础评审",
-            "manual": "手动检查",
-            "ai_retry": "AI 重试",
-            "legacy": "旧版报告",
+            "automatic": tr('自动基础评审'),
+            "manual": tr('手动检查'),
+            "ai_retry": tr('AI 重试'),
+            "legacy": tr('旧版报告'),
         }.get(
             str(self.report.get("trigger") or ""),
-            naturalize_identifier(self.report.get("trigger"), kind="未知来源"),
+            naturalize_identifier(self.report.get("trigger"), kind=tr('未知来源')),
         )
         depth_text = {
-            "basic": "本地基础",
-            "deep": "本地 + AI 深查",
+            "basic": tr('本地基础'),
+            "deep": tr('本地 + AI 深查'),
         }.get(
             str(self.report.get("depth") or ""),
             naturalize_identifier(self.report.get("depth"), kind="")
             if self.report.get("depth")
             else "",
         )
-        source_parts = [f"来源：{trigger_text}"]
+        source_parts = [tr('来源：{v0}', v0=trigger_text)]
         if depth_text:
-            source_parts.append(f"深度：{depth_text}")
+            source_parts.append(tr('深度：{v0}', v0=depth_text))
         self.source_label = QLabel(" · ".join(source_parts))
         self.source_label.setObjectName("InspectionSource")
         layout.addWidget(self.source_label)
 
         counts = self.finding_counts()
         self.count_label = QLabel(
-            f"错误 {counts['error']}  ·  警告 {counts['warning']}  ·  提示 {counts['info']}"
+            tr('错误 {v0}  ·  警告 {v1}  ·  提示 {v2}', v0=counts['error'], v1=counts['warning'], v2=counts['info'])
         )
         self.count_label.setObjectName("InspectionCounts")
         layout.addWidget(self.count_label)
 
-        for severity, label in (("error", "错误"), ("warning", "警告"), ("info", "提示")):
+        for severity, label in (("error", tr('错误')), ("warning", tr('警告')), ("info", tr('提示'))):
             findings = [item for item in self.report["findings"] if item["severity"] == severity]
             if not findings:
                 continue
@@ -629,7 +631,7 @@ class InspectionReportCard(QFrame):
         )
         check_lines = _string_list(checks)
         if check_lines:
-            check_group = QGroupBox("在线核查步骤（需人工执行）")
+            check_group = QGroupBox(tr('在线核查步骤（需人工执行）'))
             check_layout = QVBoxLayout(check_group)
             check_label = QLabel("\n".join(f"{index + 1}. {item}" for index, item in enumerate(check_lines)))
             check_label.setObjectName("OnlineChecks")
@@ -642,9 +644,9 @@ class InspectionReportCard(QFrame):
         # Give conditionally visible actions a parent before calling setVisible().
         # Otherwise Qt briefly treats a visible, unparented button as its own
         # top-level window while persisted report cards are being rebuilt.
-        self.retry_button = QPushButton("重试 AI 深查", self)
+        self.retry_button = QPushButton(tr('重试 AI 深查'), self)
         self.retry_button.setObjectName("SecondaryButton")
-        set_codicon(self.retry_button, "sync", "重试 AI 深查", 9)
+        set_codicon(self.retry_button, "sync", tr('重试 AI 深查'), 9)
         retry_states = {"local_only", "local", "partial", "partially_complete", "failed", "error"}
         ai_error = _first(self.report, "ai_error", "error_message", default="")
         self.retry_button.setVisible(self.report.get("status") in retry_states or bool(ai_error))
@@ -654,9 +656,9 @@ class InspectionReportCard(QFrame):
         actions.addWidget(self.retry_button)
 
         legacy_instruction = str(self.report.get("fix_instruction") or "").strip()
-        self.copy_button = QPushButton("复制修复要求到输入框", self)
+        self.copy_button = QPushButton(tr('复制修复要求到输入框'), self)
         self.copy_button.setObjectName("SecondaryButton")
-        set_codicon(self.copy_button, "copy", "复制修复要求到输入框", 9)
+        set_codicon(self.copy_button, "copy", tr('复制修复要求到输入框'), 9)
         self.copy_button.setVisible(bool(legacy_instruction))
         self.copy_button.clicked.connect(
             lambda: self.copy_fix_requested.emit(legacy_instruction)
@@ -664,9 +666,9 @@ class InspectionReportCard(QFrame):
         actions.addWidget(self.copy_button)
         actions.addStretch()
 
-        self.repair_button = QPushButton("生成所选问题的修复版本")
+        self.repair_button = QPushButton(tr('生成所选问题的修复版本'))
         self.repair_button.setObjectName("PrimaryButton")
-        set_codicon(self.repair_button, "tools", "生成所选问题的修复版本", 9)
+        set_codicon(self.repair_button, "tools", tr('生成所选问题的修复版本'), 9)
         self.repair_button.clicked.connect(self._request_repair)
         actions.addWidget(self.repair_button)
         layout.addLayout(actions)
@@ -691,9 +693,9 @@ class InspectionReportCard(QFrame):
         selected = self.selected_finding_ids()
         self.repair_button.setEnabled(bool(selected))
         if selected:
-            self.repair_button.setText(f"生成修复版本（已选 {len(selected)} 项）")
+            self.repair_button.setText(tr('生成修复版本（已选 {v0} 项）', v0=len(selected)))
         else:
-            self.repair_button.setText("生成所选问题的修复版本")
+            self.repair_button.setText(tr('生成所选问题的修复版本'))
 
     def _request_repair(self):
         selected = self.selected_finding_ids()
@@ -754,28 +756,28 @@ class DebugContextWidget(QFrame):
         layout.setContentsMargins(10, 9, 10, 9)
         layout.setSpacing(8)
 
-        notice = QLabel("仅记录人工观测信息；不会连接、下载或控制 PLC。")
+        notice = QLabel(tr('仅记录人工观测信息；不会连接、下载或控制 PLC。'))
         notice.setObjectName("DebugContextNotice")
         notice.setWordWrap(True)
         layout.addWidget(notice)
 
         self.expected_edit = self._add_text_field(
             layout,
-            "期望行为",
-            "例如：按下启动后，Y0 保持运行直至停止信号到达",
+            tr('期望行为'),
+            tr('例如：按下启动后，Y0 保持运行直至停止信号到达'),
         )
         self.condition_edit = self._add_text_field(
             layout,
-            "发生条件",
-            "例如：仅在回零完成后的第二次启动出现",
+            tr('发生条件'),
+            tr('例如：仅在回零完成后的第二次启动出现'),
         )
         self.trigger_condition_edit = self.condition_edit
 
-        observation_group = QGroupBox("人工观测值")
+        observation_group = QGroupBox(tr('人工观测值'))
         observation_layout = QVBoxLayout(observation_group)
         self.observation_table = QTableWidget(0, 3)
         self.observations_table = self.observation_table
-        self.observation_table.setHorizontalHeaderLabels(["地址", "值", "观测时刻"])
+        self.observation_table.setHorizontalHeaderLabels([tr('地址'), tr('值'), tr('观测时刻')])
         self.observation_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
@@ -790,9 +792,9 @@ class DebugContextWidget(QFrame):
 
         observation_actions = QHBoxLayout()
         observation_actions.addStretch()
-        self.add_observation_button = QPushButton("新增观测")
+        self.add_observation_button = QPushButton(tr('新增观测'))
         self.add_observation_button.setObjectName("SecondaryButton")
-        self.remove_observation_button = QPushButton("删除选中")
+        self.remove_observation_button = QPushButton(tr('删除选中'))
         self.remove_observation_button.setObjectName("SecondaryButton")
         self.add_observation_button.clicked.connect(self.add_observation)
         self.remove_observation_button.clicked.connect(self.remove_selected_observations)
@@ -803,13 +805,13 @@ class DebugContextWidget(QFrame):
 
         self.recent_changes_edit = self._add_text_field(
             layout,
-            "最近改动",
-            "例如：调整了 T0 设定值，或更换了 X3 传感器",
+            tr('最近改动'),
+            tr('例如：调整了 T0 设定值，或更换了 X3 传感器'),
         )
         self.notes_edit = self._add_text_field(
             layout,
-            "补充说明",
-            "补充复现步骤、现场限制或希望优先核查的方向",
+            tr('补充说明'),
+            tr('补充复现步骤、现场限制或希望优先核查的方向'),
         )
 
         for editor in (

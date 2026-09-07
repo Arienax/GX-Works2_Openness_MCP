@@ -3,7 +3,7 @@ from pathlib import Path
 
 def test_gxw_reader_ui_entry_is_wired():
     text = Path("src/main.py").read_text(encoding="utf-8")
-    assert 'QPushButton("解析 GXW")' in text
+    assert "QPushButton(tr('解析 GXW'))" in text
     assert 'self.gxw_reader_button.clicked.connect(self._open_gxw_structured_reader)' in text
     assert 'def _open_gxw_structured_reader(self):' in text
     assert 'QFileDialog.getOpenFileName(' in text

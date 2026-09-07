@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 
-sdk_datas = []
+sdk_datas = collect_data_files('PyQt5', includes=['**/translations/qtbase_ja.qm', '**/translations/qtbase_zh_CN.qm'])
 sdk_binaries = []
 sdk_hiddenimports = []
 for package_name in (
@@ -27,6 +27,7 @@ a = Analysis(
     binaries=sdk_binaries,
     datas=[
         ('resources/config.default.json', '.'),
+        ('resources/locales', 'resources/locales'),
         ('resources/pattern_library.json', '.'),
         ('resources/plc_models.json', '.'),
         ('resources/instructions/mitsubishi', 'resources/instructions/mitsubishi'),

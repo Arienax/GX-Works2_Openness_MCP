@@ -1,3 +1,5 @@
+from i18n import DisplayLanguageGuard, runtime_text, tr
+from qt_compat import QGridLayout, QSizePolicy
 import sys
 import os
 import json
@@ -121,6 +123,9 @@ from plc_ir import (
 _REGENERATE_LOCKED_SPEC_RE = re.compile(
     r"^(?:请)?(?:重新|再次|再|重试)(?:按(?:当前)?已确认规格)?"
     r"(?:生成|尝试生成)(?:程序|方案|一次)?[。！!]*$"
+    r"|^(?:please\s+)?(?:regenerate|retry|generate\s+again)(?:\s+the)?(?:\s+(?:program|code|plan))?[.!]*$"
+    r"|^(?:プログラムを)?(?:再生成|再試行)(?:してください|して)?[。！!]*$",
+    re.IGNORECASE,
 )
 
 
@@ -531,6 +536,7 @@ class ThinkingPanel(QFrame):
         super().__init__(parent)
         self.setObjectName("ThinkingPanel")
         self._expanded = False
+        self._language_guards = {}
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -542,15 +548,15 @@ class ThinkingPanel(QFrame):
         header_layout = QHBoxLayout(header_frame)
         header_layout.setContentsMargins(4, 2, 8, 2)
 
-        self.toggle_btn = QPushButton("推理详情")
+        self.toggle_btn = QPushButton(tr('推理详情'))
         self.toggle_btn.setObjectName("ThinkingPanelToggle")
-        set_codicon(self.toggle_btn, "chevron-right", "推理详情", 10)
+        set_codicon(self.toggle_btn, "chevron-right", tr('推理详情'), 10)
         self.toggle_btn.setFixedHeight(34)
         self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.toggle_btn.setToolTip("展开或收起模型推理与生成日志")
+        self.toggle_btn.setToolTip(tr('展开或收起模型推理与生成日志'))
         self.toggle_btn.clicked.connect(self._toggle)
 
-        self.status_label = QLabel("等待中")
+        self.status_label = QLabel(tr('等待中'))
         self.status_label.setObjectName("ThinkingStatus")
 
         header_layout.addWidget(self.toggle_btn)
@@ -583,7 +589,8 @@ class ThinkingPanel(QFrame):
         """追加推理文本片段并自动滚屏。"""
         from qt_compat import QTextCursor
         self.content_edit.moveCursor(QTextCursor.MoveOperation.End)
-        self.content_edit.insertPlainText(token)
+        guard = self._language_guards.setdefault("reasoning", DisplayLanguageGuard())
+        self.content_edit.insertPlainText(guard.feed(token))
         scrollbar = self.content_edit.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
@@ -591,18 +598,26 @@ class ThinkingPanel(QFrame):
         """追加输出内容片段（与推理区分，灰色前缀）。"""
         from qt_compat import QTextCursor
         self.content_edit.moveCursor(QTextCursor.MoveOperation.End)
-        self.content_edit.insertPlainText(token)
+        guard = self._language_guards.setdefault("content", DisplayLanguageGuard())
+        self.content_edit.insertPlainText(guard.feed(token))
         scrollbar = self.content_edit.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
     def set_status(self, text: str):
-        self.status_label.setText(text)
+        self.flush_display()
+        self.status_label.setText(runtime_text(text))
+
+    def flush_display(self):
+        for guard in self._language_guards.values():
+            self.content_edit.moveCursor(QTextCursor.MoveOperation.End)
+            self.content_edit.insertPlainText(guard.flush())
 
     def reset(self):
         """清空内容、重置标题与状态。"""
         self.content_edit.clear()
-        self.status_label.setText("思考中...")
-        set_codicon(self.toggle_btn, "chevron-down", "推理详情", 10)
+        self._language_guards = {}
+        self.status_label.setText(tr('思考中...'))
+        set_codicon(self.toggle_btn, "chevron-down", tr('推理详情'), 10)
         if not self._expanded:
             self._expand()
 
@@ -610,8 +625,9 @@ class ThinkingPanel(QFrame):
         """追加错误信息（红色提示）。"""
         from qt_compat import QTextCursor
         self.content_edit.moveCursor(QTextCursor.MoveOperation.End)
-        self.content_edit.insertPlainText(f"\n---\n⚠ {msg}\n")
-        self.status_label.setText("出错")
+        self.flush_display()
+        self.content_edit.insertPlainText(f"\n---\n⚠ {runtime_text(msg)}\n")
+        self.status_label.setText(tr('出错'))
 
     # ---------- 折叠控制 ----------
 
@@ -623,12 +639,12 @@ class ThinkingPanel(QFrame):
 
     def _expand(self):
         self.content_edit.setVisible(True)
-        set_codicon(self.toggle_btn, "chevron-down", "推理详情", 10)
+        set_codicon(self.toggle_btn, "chevron-down", tr('推理详情'), 10)
         self._expanded = True
 
     def _collapse(self):
         self.content_edit.setVisible(False)
-        set_codicon(self.toggle_btn, "chevron-right", "推理详情", 10)
+        set_codicon(self.toggle_btn, "chevron-right", tr('推理详情'), 10)
         self._expanded = False
 
 
@@ -681,12 +697,12 @@ class AnalysisThread(QThread):
             )
             if result is None:
                 self.analysis_failed.emit(
-                    self.task_id, "AI 分析返回空结果，请重试。"
+                    self.task_id, tr('AI 分析返回空结果，请重试。')
                 )
                 return
             self.analysis_done.emit(self.task_id, result)
         except Exception as e:
-            self.analysis_failed.emit(self.task_id, f"分析失败: {str(e)}")
+            self.analysis_failed.emit(self.task_id, tr('分析失败: {v0}', v0=str(e)))
 
 
 class ToolAgentThread(QThread):
@@ -733,7 +749,7 @@ class ToolAgentThread(QThread):
                 },
             )
         except Exception as error:
-            self.agent_failed.emit(self.task_id, f"AI 工具任务失败：{error}")
+            self.agent_failed.emit(self.task_id, tr('AI 工具任务失败：{v0}', v0=error))
 
 
 class GXWorks2ImportThread(QThread):
@@ -799,7 +815,7 @@ class GXWorks2ImportThread(QThread):
             result = ImportResult(
                 False,
                 "unexpected",
-                f"GX Works2导入服务异常：{error}",
+                tr('GX Works2导入服务异常：{v0}', v0=error),
                 ImportErrorCode.AUTOMATION_FAILED,
                 csv_path=self.csv_path,
             )
@@ -858,14 +874,14 @@ class GXWorks2SyncInspectThread(QThread):
             result = SyncResult(
                 False,
                 SyncStatus.ERROR,
-                "GX Works2读取检查异常：" + describe_exception(error),
+                tr('GX Works2读取检查异常：') + describe_exception(error),
                 GXSyncErrorCode.GX_UNEXPECTED_ERROR,
                 details={
                     "category": "precheck",
                     "stage": "unexpected",
                     "error_code": GXSyncErrorCode.GX_UNEXPECTED_ERROR.value,
                     "retryable": False,
-                    "suggestion": "请查看技术详情；若问题持续出现，请保留详情用于排查。",
+                    "suggestion": tr('请查看技术详情；若问题持续出现，请保留详情用于排查。'),
                     "gx_running": None,
                     "gx_process_id": None,
                     "gx_window_handle": None,
@@ -895,38 +911,38 @@ class GXWorks2SyncErrorDialog(QDialog):
     """Structured, expandable diagnostics for a failed read-side sync."""
 
     STAGE_LABELS = {
-        "validate_local": "当前项目CSV校验",
-        "check_gxworks2": "检查GX Works2",
-        "retry_check_gxworks2": "重试前检查GX Works2",
-        "check_project": "检查GX Works2工程",
-        "check_program": "检查MAIN程序",
-        "inspect_project": "检查GX Works2工程状态",
-        "retry_inspect_project": "重试前检查工程状态",
-        "activate_main": "激活MAIN程序",
-        "activate_comments": "打开软元件注释",
-        "open_export_menu": "打开“写入至CSV文件”",
-        "wait_program_file_dialog": "等待程序文件选择窗口",
-        "wait_comment_file_dialog": "等待注释文件选择窗口",
-        "submit_program_export_path": "提交程序CSV导出路径",
-        "submit_comment_export_path": "提交注释CSV导出路径",
-        "wait_program_export_file": "等待程序CSV生成",
-        "wait_comment_export_file": "等待注释CSV生成",
-        "export_program": "程序CSV导出",
-        "validate_program_csv": "校验程序CSV",
-        "export_comments": "注释CSV导出",
-        "validate_comment_csv": "校验注释CSV",
-        "write_manifest": "保存导出校验清单",
-        "resolve_baseline": "确定同步基线",
-        "compare": "读取并比较同步基线",
-        "save_baseline": "保存同步基线",
-        "unexpected": "同步服务内部处理",
+        "validate_local": tr('当前项目CSV校验'),
+        "check_gxworks2": tr('检查GX Works2'),
+        "retry_check_gxworks2": tr('重试前检查GX Works2'),
+        "check_project": tr('检查GX Works2工程'),
+        "check_program": tr('检查MAIN程序'),
+        "inspect_project": tr('检查GX Works2工程状态'),
+        "retry_inspect_project": tr('重试前检查工程状态'),
+        "activate_main": tr('激活MAIN程序'),
+        "activate_comments": tr('打开软元件注释'),
+        "open_export_menu": tr('打开“写入至CSV文件”'),
+        "wait_program_file_dialog": tr('等待程序文件选择窗口'),
+        "wait_comment_file_dialog": tr('等待注释文件选择窗口'),
+        "submit_program_export_path": tr('提交程序CSV导出路径'),
+        "submit_comment_export_path": tr('提交注释CSV导出路径'),
+        "wait_program_export_file": tr('等待程序CSV生成'),
+        "wait_comment_export_file": tr('等待注释CSV生成'),
+        "export_program": tr('程序CSV导出'),
+        "validate_program_csv": tr('校验程序CSV'),
+        "export_comments": tr('注释CSV导出'),
+        "validate_comment_csv": tr('校验注释CSV'),
+        "write_manifest": tr('保存导出校验清单'),
+        "resolve_baseline": tr('确定同步基线'),
+        "compare": tr('读取并比较同步基线'),
+        "save_baseline": tr('保存同步基线'),
+        "unexpected": tr('同步服务内部处理'),
     }
 
     def __init__(self, result, parent=None):
         super().__init__(parent)
         self.result = result
         self.retry_requested = False
-        self.setWindowTitle("GX Works2操作未完成")
+        self.setWindowTitle(tr('GX Works2操作未完成'))
         self.setModal(True)
         self.setMinimumWidth(560)
         dialog_font = QFont("Microsoft YaHei")
@@ -945,25 +961,25 @@ class GXWorks2SyncErrorDialog(QDialog):
         layout.addWidget(headline)
 
         stage_label = QLabel(
-            "阶段\n" + self.STAGE_LABELS.get(stage, stage or "未知阶段")
+            tr('阶段\n') + self.STAGE_LABELS.get(stage, stage or tr('未知阶段'))
         )
         stage_label.setWordWrap(True)
         layout.addWidget(stage_label)
 
         reason = naturalize_display_text(getattr(result, "message", ""))
         if reason:
-            reason_label = QLabel("原因\n" + reason)
+            reason_label = QLabel(tr('原因\n') + reason)
             reason_label.setWordWrap(True)
             layout.addWidget(reason_label)
 
-        checks_label = QLabel("检测结果\n" + self._checks_text(details, stage))
+        checks_label = QLabel(tr('检测结果\n') + self._checks_text(details, stage))
         checks_label.setWordWrap(True)
         layout.addWidget(checks_label)
 
         suggestion = naturalize_display_text(
-            details.get("suggestion") or "请查看技术详情后重试。"
+            details.get("suggestion") or tr('请查看技术详情后重试。')
         )
-        suggestion_label = QLabel("建议\n" + suggestion)
+        suggestion_label = QLabel(tr('建议\n') + suggestion)
         suggestion_label.setWordWrap(True)
         layout.addWidget(suggestion_label)
 
@@ -980,15 +996,15 @@ class GXWorks2SyncErrorDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         if bool(getattr(result, "retryable", False)):
-            self.retry_button = QPushButton("重试", self)
+            self.retry_button = QPushButton(tr('重试'), self)
             self.retry_button.clicked.connect(self._accept_retry)
             buttons.addWidget(self.retry_button)
         else:
             self.retry_button = None
-        self.details_button = QPushButton("查看技术详情", self)
+        self.details_button = QPushButton(tr('查看技术详情'), self)
         self.details_button.clicked.connect(self._toggle_details)
         buttons.addWidget(self.details_button)
-        cancel_button = QPushButton("取消", self)
+        cancel_button = QPushButton(tr('取消'), self)
         cancel_button.clicked.connect(self.reject)
         buttons.addWidget(cancel_button)
         layout.addLayout(buttons)
@@ -1007,44 +1023,44 @@ class GXWorks2SyncErrorDialog(QDialog):
     def _checks_text(cls, details, stage):
         lines = [
             cls._status_line(
-                "GX Works2正在运行",
+                tr('GX Works2正在运行'),
                 details.get("gx_running"),
             ),
-            cls._status_line("工程已打开", details.get("project_open")),
-            cls._status_line("MAIN已打开", details.get("program_ready")),
+            cls._status_line(tr('工程已打开'), details.get("project_open")),
+            cls._status_line(tr('MAIN已打开'), details.get("program_ready")),
         ]
         comment_stage = (
             "comment" in stage or details.get("operation") == "comment_export"
         )
         if stage in {"write_manifest", "compare", "save_baseline"}:
-            lines.append(cls._status_line("程序CSV已导出并校验", True))
-            lines.append(cls._status_line("注释CSV已导出并校验", True))
+            lines.append(cls._status_line(tr('程序CSV已导出并校验'), True))
+            lines.append(cls._status_line(tr('注释CSV已导出并校验'), True))
         elif comment_stage:
-            lines.append(cls._status_line("程序CSV已导出并校验", True))
-            lines.append(cls._status_line("注释CSV已导出并校验", False))
+            lines.append(cls._status_line(tr('程序CSV已导出并校验'), True))
+            lines.append(cls._status_line(tr('注释CSV已导出并校验'), False))
         elif any(
             token in stage
             for token in ("program", "export_menu", "file_dialog", "activate_main")
         ):
-            lines.append(cls._status_line("程序CSV已导出并校验", False))
+            lines.append(cls._status_line(tr('程序CSV已导出并校验'), False))
         return "\n".join(lines)
 
     @staticmethod
     def _headline(result, details):
         stage = str(getattr(result, "stage", "") or details.get("stage") or "")
         if "comment" in stage or details.get("operation") == "comment_export":
-            return "读取软元件注释失败"
+            return tr('读取软元件注释失败')
         if any(
             token in stage
             for token in ("program", "export_menu", "file_dialog", "activate_main")
         ):
-            return "读取MAIN失败"
-        return naturalize_display_text(result.message) or "GX Works2同步未完成"
+            return tr('读取MAIN失败')
+        return naturalize_display_text(result.message) or tr('GX Works2同步未完成')
 
     def _toggle_details(self):
         visible = self.details_editor.isHidden()
         self.details_editor.setVisible(visible)
-        self.details_button.setText("收起技术详情" if visible else "查看技术详情")
+        self.details_button.setText(tr('收起技术详情') if visible else tr('查看技术详情'))
         self.adjustSize()
 
     def _accept_retry(self):
@@ -1146,16 +1162,16 @@ class DebugThread(QThread):
 
     def _fallback_report(self, error_text=""):
         causes = [
-            "AI 调试接口暂时不可用，已先返回本地结构评审结果。"
+            tr('AI 调试接口暂时不可用，已先返回本地结构评审结果。')
         ]
         if error_text:
-            causes.append(f"接口错误：{error_text}")
+            causes.append(tr('接口错误：{v0}', v0=error_text))
         return {
-            "summary": "调试报告已由本地评审兜底生成",
+            "summary": tr('调试报告已由本地评审兜底生成'),
             "possible_causes": causes,
             "related_rungs": [],
             "recommended_changes": [
-                "根据本地评审提示检查输出所有权、状态跳转、复位优先级和定时器复位路径。"
+                tr('根据本地评审提示检查输出所有权、状态跳转、复位优先级和定时器复位路径。')
             ],
             "needs_fix": False,
             "fix_instruction": "",
@@ -1217,7 +1233,7 @@ class InspectionThread(QThread):
         if error:
             report["summary"] = (
                 str(report.get("summary", "")).rstrip("。")
-                + f"。AI 深查未完成：{error}"
+                + tr('。AI 深查未完成：{v0}', v0=error)
             ).strip()
         return report
 
@@ -1229,7 +1245,7 @@ class InspectionThread(QThread):
                 run_local_inspection,
             )
 
-            self.progress_updated.emit(self.task_id, "正在执行本地规则")
+            self.progress_updated.emit(self.task_id, tr('正在执行本地规则'))
             local_report = run_local_inspection(
                 self.current_version_json,
                 report_type=self.report_type,
@@ -1250,12 +1266,12 @@ class InspectionThread(QThread):
                     partial = self._mark_ai(
                         local_report,
                         "skipped_no_key",
-                        "未配置 API Key；已保留本地检查结果。",
+                        tr('未配置 API Key；已保留本地检查结果。'),
                     )
                     self.inspection_done.emit(self.task_id, partial)
                     return
 
-                self.progress_updated.emit(self.task_id, "正在进行多角色深度评审")
+                self.progress_updated.emit(self.task_id, tr('正在进行多角色深度评审'))
                 from api import run_multi_agent_specialist
                 from plc_multi_agent import DeterministicMultiAgentSupervisor
 
@@ -1271,7 +1287,7 @@ class InspectionThread(QThread):
                 def run_specialist(role, payload):
                     self.progress_updated.emit(
                         self.task_id,
-                        "正在检查程序逻辑" if role == "reviewer" else "正在复核扫描与时序",
+                        tr('正在检查程序逻辑') if role == "reviewer" else tr('正在复核扫描与时序'),
                     )
                     return run_multi_agent_specialist(
                         role,
@@ -1359,8 +1375,8 @@ class EvidenceDebugPlanThread(QThread):
                 self.project_id, self.base_version_id, self.run_id
             )
             if not isinstance(program, dict) or not isinstance(saved_run, dict):
-                raise ValueError("找不到当前版本的 PLC IR 或失败仿真记录。")
-            self.progress_updated.emit(self.task_id, "正在整理失败轨迹和反向依赖")
+                raise ValueError(tr('找不到当前版本的 PLC IR 或失败仿真记录。'))
+            self.progress_updated.emit(self.task_id, tr('正在整理失败轨迹和反向依赖'))
             evidence = build_failure_evidence(
                 program,
                 saved_run,
@@ -1371,21 +1387,21 @@ class EvidenceDebugPlanThread(QThread):
 
             def run_specialist(role, payload):
                 if role == DEBUG_AGENT:
-                    self.progress_updated.emit(self.task_id, "AI 正在分析证据链")
+                    self.progress_updated.emit(self.task_id, tr('AI 正在分析证据链'))
                     return debug_evidence_diagnosis(
                         payload["evidence"],
                         effort=self.effort,
                         raise_errors=True,
                     )
                 if role == PATCH_AGENT:
-                    self.progress_updated.emit(self.task_id, "AI 正在生成局部网络补丁")
+                    self.progress_updated.emit(self.task_id, tr('AI 正在生成局部网络补丁'))
                     return debug_evidence_patch(
                         payload["evidence"],
                         payload["diagnosis"],
                         effort=self.effort,
                         raise_errors=True,
                     )
-                raise ValueError(f"不支持的调试代理角色：{role}")
+                raise ValueError(tr('不支持的调试代理角色：{v0}', v0=role))
 
             plan = DeterministicMultiAgentSupervisor(
                 run_specialist
@@ -1439,13 +1455,13 @@ class EvidenceDebugExecuteThread(QThread):
             from plc_debug_loop import DebugPatchLoopService
             from simulator.runtime import get_simulator_gateway_runtime
 
-            self.progress_updated.emit(self.task_id, "正在校验候选补丁")
+            self.progress_updated.emit(self.task_id, tr('正在校验候选补丁'))
 
             def importing(*args, **kwargs):
                 phase = (kwargs.get("import_context") or {}).get("debug_phase")
                 self.progress_updated.emit(
                     self.task_id,
-                    "正在恢复原版本" if phase == "rollback" else "正在导入候选版本",
+                    tr('正在恢复原版本') if phase == "rollback" else tr('正在导入候选版本'),
                 )
                 return import_current_program(*args, **kwargs)
 
@@ -1493,10 +1509,10 @@ class SimulatorTestPlanThread(QThread):
 
             program = self.store.load_program_ir(self.project_id, self.version_id)
             if not isinstance(program, dict):
-                raise ValueError("当前版本没有可用于生成测试的 PLC IR。")
-            self.progress_updated.emit(self.task_id, "正在整理程序行为和 I/O")
+                raise ValueError(tr('当前版本没有可用于生成测试的 PLC IR。'))
+            self.progress_updated.emit(self.task_id, tr('正在整理程序行为和 I/O'))
             context = build_test_generation_context(program)
-            self.progress_updated.emit(self.task_id, "AI 正在生成仿真测试方案")
+            self.progress_updated.emit(self.task_id, tr('AI 正在生成仿真测试方案'))
             candidate = generate_simulator_test_suite(
                 context,
                 effort=self.effort,
@@ -1513,12 +1529,12 @@ class SimulatorTestPlanThread(QThread):
             )
             self.progress_updated.emit(
                 self.task_id,
-                "正在解析模型输出：规范化测试步骤与时间约束",
+                tr('正在解析模型输出：规范化测试步骤与时间约束'),
             )
             suite = normalize_generated_test_suite(candidate, program)
             self.progress_updated.emit(
                 self.task_id,
-                "正在解析模型输出：保存版本绑定测试方案",
+                tr('正在解析模型输出：保存版本绑定测试方案'),
             )
             persisted = self.store.save_simulator_test_plan(
                 self.project_id,
@@ -1651,7 +1667,7 @@ class RequirementConfirmDialog(QDialog):
         super().__init__(parent)
         self.analysis = analysis_json
         self.confirmed_spec = None  # 用户确认后的规格
-        self.setWindowTitle("AI 理解确认与补充")
+        self.setWindowTitle(tr('AI 理解确认与补充'))
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setMinimumSize(620, 560)
         self.resize(720, 680)
@@ -1665,15 +1681,15 @@ class RequirementConfirmDialog(QDialog):
         layout.setContentsMargins(20, 16, 20, 16)
 
         # ---- 标题 ----
-        title = QLabel("AI 需求分析确认")
+        title = QLabel(tr('AI 需求分析确认'))
         title.setStyleSheet("color:#0f172a;font-size:18px;font-weight:700;")
         layout.addWidget(title)
 
         # ---- AI 理解摘要 ----
         summary = naturalize_display_text(
-            self.analysis.get("summary", "(无法解析)")
+            self.analysis.get("summary", tr('(无法解析)'))
         )
-        summary_label = QLabel(f"AI 理解：{summary}")
+        summary_label = QLabel(tr('AI 理解：{v0}', v0=summary))
         summary_label.setWordWrap(True)
         summary_label.setStyleSheet(
             "color:#334155;background:#ecfdf5;border:1px solid #a7f3d0;"
@@ -1686,7 +1702,7 @@ class RequirementConfirmDialog(QDialog):
         self.approach_radios = {}
         self.custom_approach_edit = None
         if approaches:
-            inst_group = QGroupBox("选择编程方案")
+            inst_group = QGroupBox(tr('选择编程方案'))
             inst_layout = QVBoxLayout(inst_group)
             self.approach_group = QButtonGroup(self)
             for i, app in enumerate(approaches):
@@ -1696,9 +1712,9 @@ class RequirementConfirmDialog(QDialog):
                 )
                 text = f"{approach_name} — {approach_description}".rstrip(" —")
                 if app.get('pros'):
-                    text += f"（优点: {naturalize_display_text(app['pros'])}"
+                    text += tr('（优点: {v0}', v0=naturalize_display_text(app['pros']))
                     if app.get('cons'):
-                        text += f"，缺点: {naturalize_display_text(app['cons'])}"
+                        text += tr('，缺点: {v0}', v0=naturalize_display_text(app['cons']))
                     text += "）"
                 rb = QRadioButton(text)
                 rb.setStyleSheet("font-size:12px;color:#334155;padding:4px 0;")
@@ -1708,14 +1724,14 @@ class RequirementConfirmDialog(QDialog):
                 self.approach_radios[i] = app
                 inst_layout.addWidget(rb)
             # 自定义方案
-            custom_rb = QRadioButton("自定义方案")
+            custom_rb = QRadioButton(tr('自定义方案'))
             custom_rb.setStyleSheet("font-size:12px;color:#475569;padding:4px 0;")
             self.approach_group.addButton(custom_rb, len(approaches))
-            self.approach_radios[len(approaches)] = {"name":"自定义","description":"","generation_guide":""}
+            self.approach_radios[len(approaches)] = {"name":tr('自定义'),"description":"","generation_guide":""}
             inst_layout.addWidget(custom_rb)
             # 自定义输入框（选中时显示）
             self.custom_approach_edit = QTextEdit()
-            self.custom_approach_edit.setPlaceholderText("在此描述你自己的实现方案...")
+            self.custom_approach_edit.setPlaceholderText(tr('在此描述你自己的实现方案...'))
             self.custom_approach_edit.setMaximumHeight(60)
             self.custom_approach_edit.setStyleSheet("font-size:12px;")
             self.custom_approach_edit.setVisible(False)
@@ -1729,7 +1745,7 @@ class RequirementConfirmDialog(QDialog):
         missing = self.analysis.get("missing_info", [])
         self.missing_widgets = {}
         if missing:
-            missing_group = QGroupBox("需要补充的信息")
+            missing_group = QGroupBox(tr('需要补充的信息'))
             missing_layout = QVBoxLayout(missing_group)
             for item in missing:
                 row = QHBoxLayout()
@@ -1764,7 +1780,7 @@ class RequirementConfirmDialog(QDialog):
         # ---- 软元件分配 ----
         io = self.analysis.get("suggested_io", {})
         if io:
-            io_group = QGroupBox("建议软元件分配（可编辑）")
+            io_group = QGroupBox(tr('建议软元件分配（可编辑）'))
             io_layout = QVBoxLayout(io_group)
             io_text = self._format_io(io)
             self.io_edit = QTextEdit()
@@ -1777,10 +1793,10 @@ class RequirementConfirmDialog(QDialog):
             self.io_edit = None
 
         # ---- 补充说明（自由输入） ----
-        notes_group = QGroupBox("补充说明（可选，会直接注入生成指令）")
+        notes_group = QGroupBox(tr('补充说明（可选，会直接注入生成指令）'))
         notes_layout = QVBoxLayout(notes_group)
         self.user_notes = QTextEdit()
-        self.user_notes.setPlaceholderText("在此输入你对梯形图结构的额外要求、偏好或修正意见...")
+        self.user_notes.setPlaceholderText(tr('在此输入你对梯形图结构的额外要求、偏好或修正意见...'))
         self.user_notes.setMaximumHeight(80)
         self.user_notes.setStyleSheet("font-size:12px;")
         notes_layout.addWidget(self.user_notes)
@@ -1789,10 +1805,10 @@ class RequirementConfirmDialog(QDialog):
         # ---- 按钮 ----
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        self.back_btn = QPushButton("返回修改需求")
+        self.back_btn = QPushButton(tr('返回修改需求'))
         self.back_btn.setObjectName("CancelBtn")
         self.back_btn.clicked.connect(self._on_back)
-        self.confirm_btn = QPushButton("确认并生成")
+        self.confirm_btn = QPushButton(tr('确认并生成'))
         self.confirm_btn.clicked.connect(self._on_confirm)
         btn_layout.addWidget(self.back_btn)
         btn_layout.addWidget(self.confirm_btn)
@@ -1813,7 +1829,7 @@ class RequirementConfirmDialog(QDialog):
                     lines.append(f"{category}: {', '.join(str(i) for i in items)}")
         special = io.get("special_relays", [])
         if special:
-            lines.append(f"特殊M: {', '.join(special)}")
+            lines.append(tr('特殊M: {v0}', v0=', '.join(special)))
         return "\n".join(lines)
 
     def _apply_styles(self):
@@ -1870,7 +1886,7 @@ class RequirementConfirmDialog(QDialog):
             if checked >= 0 and checked in self.approach_radios:
                 app = dict(self.approach_radios[checked])  # copy
                 # 自定义方案：用用户输入的内容
-                if app.get("name") == "自定义" and self.custom_approach_edit:
+                if app.get("name") == tr('自定义') and self.custom_approach_edit:
                     custom_text = self.custom_approach_edit.toPlainText().strip()
                     if custom_text:
                         app["description"] = custom_text
@@ -1925,7 +1941,7 @@ class SimpleRequirementConfirmDialog(QDialog):
     ):
         super().__init__(parent)
         self._confirmed_spec = None
-        self.setWindowTitle("生成前确认")
+        self.setWindowTitle(tr('生成前确认'))
         self.setMinimumSize(760, 620)
         self.resize(880, 760)
         layout = QVBoxLayout(self)
@@ -2055,7 +2071,7 @@ class CompilerThread(QThread):
 
                 self.progress_updated.emit(
                     self.task_id,
-                    {"stage": "connecting", "message": "正在连接模型"},
+                    {"stage": "connecting", "message": tr('正在连接模型')},
                 )
 
                 full_reasoning, full_content = stream_model_response(
@@ -2075,7 +2091,7 @@ class CompilerThread(QThread):
                     image_attachments=self.image_attachments,
                 )
 
-                emit_parsing_progress("正在解析模型输出：清理流式文本")
+                emit_parsing_progress(tr('正在解析模型输出：清理流式文本'))
                 streaming_succeeded = True
 
             except Exception as stream_err:
@@ -2084,10 +2100,10 @@ class CompilerThread(QThread):
                     {
                         "stage": "fallback",
                         "severity": "warning",
-                        "message": f"流式调用失败，切换普通模式：{stream_err}",
+                        "message": tr('流式调用失败，切换普通模式：{v0}', v0=stream_err),
                     },
                 )
-                print(f"流式调用失败，降级至普通模式: {stream_err}")
+                print(tr('流式调用失败，降级至普通模式: {v0}', v0=stream_err))
 
             # ---------- Phase 2: 获取最终 JSON ----------
             if streaming_succeeded and full_content:
@@ -2113,24 +2129,24 @@ class CompilerThread(QThread):
                 )
 
             if not json_str:
-                self.failure.emit(self.task_id, "大模型未返回合法数据")
+                self.failure.emit(self.task_id, tr('大模型未返回合法数据'))
                 return
 
             def parse_candidate(candidate):
-                emit_parsing_progress("正在解析模型输出：读取 JSON 结构")
+                emit_parsing_progress(tr('正在解析模型输出：读取 JSON 结构'))
                 parsed = json.loads(candidate)
                 if self.target_mode == "ladder":
-                    emit_parsing_progress("正在解析模型输出：规范化梯形图结构")
+                    emit_parsing_progress(tr('正在解析模型输出：规范化梯形图结构'))
                     parsed, converted_counters = normalize_legacy_counter_outputs(parsed)
                     if converted_counters:
                         validation_messages.append(
-                            "已将旧版 TIMER+C 计数器结构转换为 COUNTER："
+                            tr('已将旧版 TIMER+C 计数器结构转换为 COUNTER：')
                             + ", ".join(converted_counters)
                         )
                     parsed, converted_outs = normalize_app_instr_out_outputs(parsed)
                     if converted_outs:
                         validation_messages.append(
-                            "已将误放入 APP_INSTR 的 OUT 转换为标准输出结构："
+                            tr('已将误放入 APP_INSTR 的 OUT 转换为标准输出结构：')
                             + "；".join(converted_outs)
                         )
                 if self.repair_mode:
@@ -2205,7 +2221,7 @@ class CompilerThread(QThread):
                     parsed, converted_counters = normalize_legacy_counter_outputs(parsed)
                     if converted_counters:
                         validation_messages.append(
-                            "已兼容转换旧项目中的 TIMER+C："
+                            tr('已兼容转换旧项目中的 TIMER+C：')
                             + ", ".join(converted_counters)
                         )
                     normalized_rungs = []
@@ -2215,10 +2231,10 @@ class CompilerThread(QThread):
                         )
                     if normalized_rungs:
                         validation_messages.append(
-                            "已将 M8029 完成触点规范化为应用指令的并联支路："
+                            tr('已将 M8029 完成触点规范化为应用指令的并联支路：')
                             + ", ".join(map(str, normalized_rungs))
                         )
-                    emit_parsing_progress("正在解析模型输出：执行 PLC 硬校验")
+                    emit_parsing_progress(tr('正在解析模型输出：执行 PLC 硬校验'))
                     try:
                         validate_ladder_full(
                             parsed,
@@ -2241,8 +2257,7 @@ class CompilerThread(QThread):
                                 "stage": "contract_mismatch",
                                 "severity": "warning",
                                 "message": (
-                                    "方案约束未满足；保留原始候选并先生成 CSV，"
-                                    "不会自动修复，等待用户决定。"
+                                    tr('方案约束未满足；保留原始候选并先生成 CSV，不会自动修复，等待用户决定。')
                                 ),
                             },
                         )
@@ -2260,14 +2275,14 @@ class CompilerThread(QThread):
                         semantic_gaps = strict_semantic_gaps(semantic_candidate)
                         if semantic_gaps:
                             details = "; ".join(
-                                f"{item.get('semantic')}({','.join(item.get('devices') or []) or '未指定设备'})"
+                                f"{item.get('semantic')}({','.join(item.get('devices') or []) or tr('未指定设备')})"
                                 for item in semantic_gaps
                             )
                             raise PLCJsonValidationError(
-                                "扫描周期语义未满足：" + details
+                                tr('扫描周期语义未满足：') + details
                             )
                 else:
-                    emit_parsing_progress("正在解析模型输出：校验 ST 结构")
+                    emit_parsing_progress(tr('正在解析模型输出：校验 ST 结构'))
                     validate_st_json(parsed)
                 return parsed
 
@@ -2277,24 +2292,23 @@ class CompilerThread(QThread):
                 if self.task_type == "contract_repair":
                     self.failure.emit(
                         self.task_id,
-                        "方案约束修复候选未通过验证，不会继续隐藏重试: "
-                        f"{first_err}",
+                        tr('方案约束修复候选未通过验证，不会继续隐藏重试: {v0}', v0=first_err),
                     )
                     return
                 if self.target_mode != "ladder":
                     self.failure.emit(
-                        self.task_id, f"模型输出 JSON 校验失败: {first_err}"
+                        self.task_id, tr('模型输出 JSON 校验失败: {v0}', v0=first_err)
                     )
                     return
 
-                print(f"模型首轮输出未通过硬校验，自动纠错一次: {first_err}")
+                print(tr('模型首轮输出未通过硬校验，自动纠错一次: {v0}', v0=first_err))
                 validation_messages.append(str(first_err))
                 self.progress_updated.emit(
                     self.task_id,
                     {
                         "stage": "repairing",
                         "severity": "warning",
-                        "message": f"硬校验未通过，正在自动修复：{first_err}",
+                        "message": tr('硬校验未通过，正在自动修复：{v0}', v0=first_err),
                     },
                 )
                 repair_source_json = json_str
@@ -2313,7 +2327,7 @@ class CompilerThread(QThread):
                         )
                         if normalized_rungs:
                             validation_messages.append(
-                                "本地修复时同步规范化 M8029 并联梯级："
+                                tr('本地修复时同步规范化 M8029 并联梯级：')
                                 + ", ".join(map(str, normalized_rungs))
                             )
                         validate_ladder_full(
@@ -2324,15 +2338,14 @@ class CompilerThread(QThread):
                         parsed_json = local_candidate
                         repaired_text = ", ".join(repaired_addresses)
                         validation_messages.append(
-                            f"本地自动合并重复线圈：{repaired_text}"
+                            tr('本地自动合并重复线圈：{v0}', v0=repaired_text)
                         )
                         self.progress_updated.emit(
                             self.task_id,
                             {
                                 "stage": "repaired_local",
                                 "message": (
-                                    "本地自动修复完成：已将重复线圈 "
-                                    f"{repaired_text} 合并为单一 COIL"
+                                    tr('本地自动修复完成：已将重复线圈 {v0} 合并为单一 COIL', v0=repaired_text)
                                 ),
                             },
                         )
@@ -2350,46 +2363,22 @@ class CompilerThread(QThread):
                         {
                             "stage": "repairing_remote",
                             "severity": "warning",
-                            "message": "正在请求 AI 修复，最长等待 120 秒",
+                            "message": tr('正在请求 AI 修复，最长等待 120 秒'),
                         },
                     )
 
                 model_specific_rules = (
-                    "3. FX3U 的 D8340 等定位寄存器按32位寄存器对处理，"
-                    "SFTL/SFTLP 源和目标不得重叠，M8029 与定位指令必须位于"
-                    "同一 rung 的并联分支。"
+                    '3. FX3U 的 D8340 等定位寄存器按32位寄存器对处理，SFTL/SFTLP 源和目标不得重叠，M8029 与定位指令必须位于同一 rung 的并联分支。'
                     if self.plc_model == "FX3U"
                     else
-                    "3. 按 FX5U 型号资料使用十进制 X/Y、SM/SD 特殊软元件和"
-                    "对应定位完成规则，不得套用 FX3U 专用寄存器对规则。"
+                    '3. 按 FX5U 型号资料使用十进制 X/Y、SM/SD 特殊软元件和对应定位完成规则，不得套用 FX3U 专用寄存器对规则。'
                 )
                 output_rule = (
-                    '必须返回 mode="partial"，且只能包含允许修复的梯级和地址。'
+                    tr('必须返回 mode="partial"，且只能包含允许修复的梯级和地址。')
                     if self.repair_mode
-                    else "增量编辑可返回合法 partial，否则返回完整 JSON。"
+                    else tr('增量编辑可返回合法 partial，否则返回完整 JSON。')
                 )
-                correction_request = f"""
-上一版梯形图 JSON 未通过程序硬校验。只返回修正后的 JSON，不要解释。
-
-目标 PLC：{self.plc_model}
-校验错误：
-{first_err}
-
-必须遵守：
-1. 同一 Y/M 地址在整个最终程序中只能出现一次 COIL；即使位于同一梯级的不同 branch，也仍是双线圈。
-2. 多个驱动条件必须放入一个 parallel_block，汇合后只连接一个 COIL。
-{model_specific_rules}
-4. 用户明确标注常开/常闭时，JSON 必须分别使用 NO/NC，不得自行反转。
-5. 保持用户确认的地址、参数和方案不变；型号规则冲突时采用等价合法实现并在 debug_note 标明。
-6. 禁止在 parallel_block 的 branches 内再次嵌套 parallel_block。
-7. TIMER 只能使用 T 地址、COUNTER 只能使用 C 地址；M8000/SM8000 持续使能的 TIMER 不能作为闪烁振荡器。
-8. 禁止用同一边沿下的 NC Mx→SET Mx 与 NO Mx→RST Mx 两分支模拟 ALT；改用两个明确相位及各自的定时器/状态转换。
-9. 校验错误若包含扫描周期语义：RISING_EDGE/FALLING_EDGE 必须使用对应边沿触点，FIRST_SCAN 必须使用目标 PLC 的首扫继电器，CYCLIC/INTERRUPT 必须保留对应执行源；不得用普通电平触点冒充。
-10. 用户选定方案的 generation_contract 是硬约束；必须补齐其中必用指令、软元件和结构，移除禁用项。不得换成另一个“功能等价”方案。
-11. generation_contract 中的 OUT 由 COIL/TIMER/COUNTER 输出结构满足，禁止写成 APP_INSTR OUT。RD3A/WR3A 虽是真实指令，但只能用于其手册支持的 FX0N-3A/FX2N-2AD/2DA，不得套用于 FX3U-4AD-ADP/4DA-ADP。
-
-请修复你紧邻此消息之前返回的 JSON。{output_rule}
-""".strip()
+                correction_request = '\n上一版梯形图 JSON 未通过程序硬校验。只返回修正后的 JSON，不要解释。\n\n目标 PLC：{v0}\n校验错误：\n{v1}\n\n必须遵守：\n1. 同一 Y/M 地址在整个最终程序中只能出现一次 COIL；即使位于同一梯级的不同 branch，也仍是双线圈。\n2. 多个驱动条件必须放入一个 parallel_block，汇合后只连接一个 COIL。\n{v2}\n4. 用户明确标注常开/常闭时，JSON 必须分别使用 NO/NC，不得自行反转。\n5. 保持用户确认的地址、参数和方案不变；型号规则冲突时采用等价合法实现并在 debug_note 标明。\n6. 禁止在 parallel_block 的 branches 内再次嵌套 parallel_block。\n7. TIMER 只能使用 T 地址、COUNTER 只能使用 C 地址；M8000/SM8000 持续使能的 TIMER 不能作为闪烁振荡器。\n8. 禁止用同一边沿下的 NC Mx→SET Mx 与 NO Mx→RST Mx 两分支模拟 ALT；改用两个明确相位及各自的定时器/状态转换。\n9. 校验错误若包含扫描周期语义：RISING_EDGE/FALLING_EDGE 必须使用对应边沿触点，FIRST_SCAN 必须使用目标 PLC 的首扫继电器，CYCLIC/INTERRUPT 必须保留对应执行源；不得用普通电平触点冒充。\n10. 用户选定方案的 generation_contract 是硬约束；必须补齐其中必用指令、软元件和结构，移除禁用项。不得换成另一个“功能等价”方案。\n11. generation_contract 中的 OUT 由 COIL/TIMER/COUNTER 输出结构满足，禁止写成 APP_INSTR OUT。RD3A/WR3A 虽是真实指令，但只能用于其手册支持的 FX0N-3A/FX2N-2AD/2DA，不得套用于 FX3U-4AD-ADP/4DA-ADP。\n\n请修复你紧邻此消息之前返回的 JSON。{v3}\n'.format(v0=self.plc_model, v1=first_err, v2=model_specific_rules, v3=output_rule).strip()
                 retry_json = (
                     json.dumps(parsed_json, ensure_ascii=False)
                     if local_repair_succeeded
@@ -2417,24 +2406,23 @@ class CompilerThread(QThread):
                 if not retry_json:
                     self.failure.emit(
                         self.task_id,
-                        f"模型输出校验失败且自动纠错无返回: {first_err}",
+                        tr('模型输出校验失败且自动纠错无返回: {v0}', v0=first_err),
                     )
                     return
                 try:
                     parsed_json = parse_and_validate(retry_json)
-                    print("自动纠错后的 JSON 已通过硬校验")
-                    validation_messages.append("自动修复后已通过全部硬校验")
+                    print(tr('自动纠错后的 JSON 已通过硬校验'))
+                    validation_messages.append(tr('自动修复后已通过全部硬校验'))
                 except Exception as retry_err:
                     self.failure.emit(
                         self.task_id,
-                        "模型输出连续两次未通过硬校验: "
-                        f"首次={first_err}; 重试={retry_err}"
+                        tr('模型输出连续两次未通过硬校验: 首次={v0}; 重试={v1}', v0=first_err, v1=retry_err)
                     )
                     return
 
             # 将最终 JSON 写入磁盘
             if self.target_mode == "ladder":
-                emit_parsing_progress("正在解析模型输出：构建并校验 PLC IR")
+                emit_parsing_progress(tr('正在解析模型输出：构建并校验 PLC IR'))
                 program_ir = build_plc_ir(
                     parsed_json,
                     plc_model=self.plc_model,
@@ -2462,15 +2450,15 @@ class CompilerThread(QThread):
                 semantic_gaps = strict_semantic_gaps(program_ir)
                 if semantic_gaps:
                     details = "; ".join(
-                        f"{item.get('semantic')}({','.join(item.get('devices') or []) or '未指定设备'})"
+                        f"{item.get('semantic')}({','.join(item.get('devices') or []) or tr('未指定设备')})"
                         for item in semantic_gaps
                     )
                     raise PLCJsonValidationError(
-                        "扫描周期语义未满足：" + details
+                        tr('扫描周期语义未满足：') + details
                     )
                 self.progress_updated.emit(
                     self.task_id,
-                    {"stage": "parsed", "message": "模型输出解析与硬校验完成"},
+                    {"stage": "parsed", "message": tr('模型输出解析与硬校验完成')},
                 )
 
                 # PLC IR is the canonical source for every persisted/rendered
@@ -2600,7 +2588,7 @@ class CompilerThread(QThread):
                                 else "passed"
                             ),
                             "messages": validation_messages
-                            or ["结构、指令参数和双线圈校验已通过"],
+                            or [tr('结构、指令参数和双线圈校验已通过')],
                         },
                     },
                 )
@@ -2611,7 +2599,7 @@ class CompilerThread(QThread):
                     st_text = json_str
                 self.progress_updated.emit(
                     self.task_id,
-                    {"stage": "parsed", "message": "模型输出解析与硬校验完成"},
+                    {"stage": "parsed", "message": tr('模型输出解析与硬校验完成')},
                 )
 
                 output_path = self.output_dir / "program.st"
@@ -2627,13 +2615,13 @@ class CompilerThread(QThread):
                         "artifacts": {"st": output_path.name},
                         "validation": {
                             "status": "passed",
-                            "messages": ["ST 输出结构校验已通过"],
+                            "messages": [tr('ST 输出结构校验已通过')],
                         },
                     },
                 )
 
         except Exception as e:
-            self.failure.emit(self.task_id, f"线程运行期异常: {str(e)}")
+            self.failure.emit(self.task_id, tr('线程运行期异常: {v0}', v0=str(e)))
 
 class PLCSystemUI(QMainWindow):
     def __init__(self):
@@ -2660,11 +2648,11 @@ class PLCSystemUI(QMainWindow):
 
     def on_lang_mode_changed(self, index):
         if index == 0:
-            self.canvas_title.setText("梯形图预览")
+            self.canvas_title.setText(tr('梯形图预览'))
             self._refresh_plc_target_labels()
             self.display_container.setCurrentIndex(0)
         else:
-            self.canvas_title.setText("ST 代码预览")
+            self.canvas_title.setText(tr('ST 代码预览'))
             self.format_badge.setText("Structured Text")
             self.display_container.setCurrentIndex(1)
 
@@ -2682,9 +2670,9 @@ class PLCSystemUI(QMainWindow):
             self.format_badge.setText(gx_tool)
         if hasattr(self, "export_csv_btn"):
             self.export_csv_btn.setText(
-                "导出 GX Works2 CSV"
+                tr('导出 GX Works2 CSV')
                 if model == "FX3U"
-                else "导出程序文件（FX5U）"
+                else tr('导出程序文件（FX5U）')
             )
 
     def _on_plc_model_changed(self, _index):
@@ -2701,10 +2689,10 @@ class PLCSystemUI(QMainWindow):
     def _on_input_mode_toggled(self, checked):
         """按钮文字 = 当前模式（高亮）。checked=True → SFC，else → 文本。"""
         if checked:
-            self.sfc_toggle_btn.setText("流程图模式")
+            self.sfc_toggle_btn.setText(tr('流程图模式'))
             self.input_stack.setCurrentIndex(1)  # SFC
         else:
-            self.sfc_toggle_btn.setText("文本模式")
+            self.sfc_toggle_btn.setText(tr('文本模式'))
             self.input_stack.setCurrentIndex(0)  # 文本
 
     def _on_sfc_text_generated(self, text: str):
@@ -2716,18 +2704,17 @@ class PLCSystemUI(QMainWindow):
         if code_text:
             clipboard = QApplication.clipboard()
             clipboard.setText(code_text)
-            QMessageBox.information(self, "成功", "ST 代码已成功复制到剪贴板！")
+            QMessageBox.information(self, tr('成功'), tr('ST 代码已成功复制到剪贴板！'))
         else:
-            QMessageBox.warning(self, "警告", "当前无代码内容可供复制。")
+            QMessageBox.warning(self, tr('警告'), tr('当前无代码内容可供复制。'))
 
     # 【新增】手动选择路径保存 CSV 文件的功能
     def manual_export_csv(self):
         if self._current_plc_model() != "FX3U":
             QMessageBox.information(
                 self,
-                "FX5U 导出说明",
-                "当前已验证的语句表导出仅适用于 FX3U / GX Works2。"
-                "FX5U 程序仍可生成和检查，但不会把 GX Works2 格式冒充为 GX Works3 文件。",
+                tr('FX5U 导出说明'),
+                tr('当前已验证的语句表导出仅适用于 FX3U / GX Works2。FX5U 程序仍可生成和检查，但不会把 GX Works2 格式冒充为 GX Works3 文件。'),
             )
             return
         artifacts = (self._last_result or {}).get("artifacts", {})
@@ -2744,13 +2731,13 @@ class PLCSystemUI(QMainWindow):
 
         # 1. 检查主程序文件是否存在
         if not source_program_csv or not os.path.isfile(source_program_csv):
-            QMessageBox.warning(self, "提示", "请先输入需求并完成【编译】后再尝试导出！")
+            QMessageBox.warning(self, tr('提示'), tr('请先输入需求并完成【编译】后再尝试导出！'))
             return
 
         # 唤起标准另存为对话框
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "导出 GX Works2 兼容明细表与软元件注释",
+            tr('导出 GX Works2 兼容明细表与软元件注释'),
             "plc_import_program.csv",
             "CSV Files (*.csv);;All Files (*)",
             options=QFileDialog.Option.DontUseNativeDialog,
@@ -2764,29 +2751,26 @@ class PLCSystemUI(QMainWindow):
                 
                 # 3. 自动计算注释文件的配套路径（例如将 xxx.csv 转换为 xxx_注释.csv）
                 base_name, ext = os.path.splitext(file_path)
-                comment_file_path = f"{base_name}_注释{ext}"
+                comment_file_path = tr('{v0}_注释{v1}', v0=base_name, v1=ext)
                 
                 # 4. 判断并同步复制软元件注释 CSV
                 msg_append = ""
                 if os.path.exists(source_comment_csv):
                     shutil.copy(source_comment_csv, comment_file_path)
-                    msg_append = f"\n\n配套的软元件注释已自动保存至：\n{comment_file_path}"
+                    msg_append = tr('\n\n配套的软元件注释已自动保存至：\n{v0}', v0=comment_file_path)
                 else:
-                    msg_append = "\n\n(提示: 未检测到伴随的注释数据)"
+                    msg_append = tr('\n\n(提示: 未检测到伴随的注释数据)')
 
                 QMessageBox.information(
                     self, 
-                    "导出成功", 
-                    f"主程序文件已成功保存至：\n{file_path}{msg_append}\n\n"
-                    f"【GX Works2 导入方法】:\n"
-                    f"· 导入程序：点击菜单栏【工程】->【打开其他格式文件】->【导入 Excel 语句表】。\n"
-                    f"· 导入注释：在左侧导航栏双击打开【软元件注释】，右键点击列表选择【导入 CSV 文件】。"
+                    tr('导出成功'),
+                    tr('主程序文件已成功保存至：\n{v0}{v1}\n\n【GX Works2 导入方法】:\n· 导入程序：点击菜单栏【工程】->【打开其他格式文件】->【导入 Excel 语句表】。\n· 导入注释：在左侧导航栏双击打开【软元件注释】，右键点击列表选择【导入 CSV 文件】。', v0=file_path, v1=msg_append)
                 )
             except Exception as e:
                 QMessageBox.critical(
                     self,
-                    "错误",
-                    f"文件导出失败: {naturalize_display_text(e)}",
+                    tr('错误'),
+                    tr('文件导出失败: {v0}', v0=naturalize_display_text(e)),
                 )
 
     def init_ui(self):
@@ -2821,26 +2805,26 @@ class PLCSystemUI(QMainWindow):
 
         self.window_title = QLabel("PLC AI Studio")
         self.window_title.setObjectName("WindowTitleLabel")
-        window_subtitle = QLabel("工业控制程序生成工作台")
+        window_subtitle = QLabel(tr('工业控制程序生成工作台'))
         window_subtitle.setObjectName("WindowSubtitle")
         title_text_layout.addWidget(self.window_title)
         title_text_layout.addWidget(window_subtitle)
 
-        self.options_btn = QPushButton("菜单")
+        self.options_btn = QPushButton(tr('菜单'))
         self.options_btn.setObjectName("OptionsBtn")
         self.options_btn.setFixedHeight(30)
         self.options_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.options_btn.setToolTip("新建对话或配置 API 请求")
+        self.options_btn.setToolTip(tr('新建对话或配置 API 请求'))
 
         self.top_menu = QMenu(self)
 
-        self.new_chat_action = QAction("开始新的对话", self)
+        self.new_chat_action = QAction(tr('开始新的对话'), self)
         self.new_chat_action.triggered.connect(self.clear_chat_data)
         self.top_menu.addAction(self.new_chat_action)
 
         self.top_menu.addSeparator()
 
-        self.api_config_action = QAction("API 请求格式配置", self)
+        self.api_config_action = QAction(tr('API 请求格式配置'), self)
         self.api_config_action.triggered.connect(self.open_api_config_dialog)
         self.top_menu.addAction(self.api_config_action)
 
@@ -2849,20 +2833,20 @@ class PLCSystemUI(QMainWindow):
         self.min_btn = QPushButton("—")
         self.min_btn.setObjectName("MinBtn")
         self.min_btn.setFixedSize(36, 32)
-        self.min_btn.setToolTip("最小化")
+        self.min_btn.setToolTip(tr('最小化'))
         self.min_btn.clicked.connect(self.showMinimized)
 
         self.max_btn = QPushButton("□")
         self.max_btn.setObjectName("MaxBtn")
         self.max_btn.setFixedSize(36, 32)
-        self.max_btn.setToolTip("最大化或还原")
+        self.max_btn.setToolTip(tr('最大化或还原'))
         self.max_btn.clicked.connect(self.toggle_maximize)
 
          
         self.close_btn = QPushButton("×")
         self.close_btn.setObjectName("CloseBtn")
         self.close_btn.setFixedSize(36, 32)
-        self.close_btn.setToolTip("关闭")
+        self.close_btn.setToolTip(tr('关闭'))
         self.close_btn.clicked.connect(self.close)
 
         title_layout.addWidget(app_mark)
@@ -2890,25 +2874,24 @@ class PLCSystemUI(QMainWindow):
         left_layout.setContentsMargins(18, 18, 18, 18)
         left_layout.setSpacing(12)
 
-        title_label = QLabel("控制需求")
+        title_label = QLabel(tr('控制需求'))
         title_label.setObjectName("HeaderTitle")
-        title_description = QLabel("描述控制逻辑，选择目标语言并生成可导入程序。")
+        title_description = QLabel(tr('描述控制逻辑，选择目标语言并生成可导入程序。'))
         title_description.setObjectName("HeaderDescription")
         title_description.setWordWrap(True)
 
         self.lang_combo = QComboBox()
-        self.lang_combo.addItems(["梯形图 / GX Works2", "ST 结构化文本"])
+        self.lang_combo.addItems([tr('梯形图 / GX Works2'), tr('ST 结构化文本')])
         self.lang_combo.setFixedHeight(34)
-        self.lang_combo.setToolTip("选择最终生成的程序类型")
+        self.lang_combo.setToolTip(tr('选择最终生成的程序类型'))
         self.lang_combo.currentIndexChanged.connect(self.on_lang_mode_changed)
 
         # ---- 文本输入 ----
         self.input_edit = QTextEdit()
         self.input_edit.setPlaceholderText(
-            "输入控制需求，例如：\n"
-            "X0 启动，X1 停止，Y0 电机自锁运行；过载时立即停机并报警。"
+            tr('输入控制需求，例如：\nX0 启动，X1 停止，Y0 电机自锁运行；过载时立即停机并报警。')
         )
-        self.input_edit.setAccessibleName("PLC 控制需求输入")
+        self.input_edit.setAccessibleName(tr('PLC 控制需求输入'))
 
         # ---- SFC 流程图编辑器 ----
         self.sfc_editor = SFCEditorWidget()
@@ -2919,11 +2902,11 @@ class PLCSystemUI(QMainWindow):
         self.input_stack.addWidget(self.input_edit)      # index 0: 文本
         self.input_stack.addWidget(self.sfc_editor)       # index 1: 流程图
 
-        self.compile_btn = QPushButton("分析并生成")
+        self.compile_btn = QPushButton(tr('分析并生成'))
         self.compile_btn.setObjectName("PrimaryButton")
         self.compile_btn.setFixedHeight(46)
         self.compile_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.compile_btn.setToolTip("分析需求、确认方案并生成程序")
+        self.compile_btn.setToolTip(tr('分析需求、确认方案并生成程序'))
         self.compile_btn.clicked.connect(self.start_compile)
 
         left_layout.addWidget(title_label)
@@ -2937,15 +2920,15 @@ class PLCSystemUI(QMainWindow):
 
         input_mode_row = QHBoxLayout()
         input_mode_row.setSpacing(8)
-        input_mode_label = QLabel("输入方式")
+        input_mode_label = QLabel(tr('输入方式'))
         input_mode_label.setObjectName("SectionLabel")
 
-        self.sfc_toggle_btn = QPushButton("文本模式")
+        self.sfc_toggle_btn = QPushButton(tr('文本模式'))
         self.sfc_toggle_btn.setObjectName("ModeToggleBtn")
         self.sfc_toggle_btn.setCheckable(True)
         self.sfc_toggle_btn.setFixedHeight(34)
         self.sfc_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.sfc_toggle_btn.setToolTip("在文本需求与流程图编辑器之间切换")
+        self.sfc_toggle_btn.setToolTip(tr('在文本需求与流程图编辑器之间切换'))
         self.sfc_toggle_btn.toggled.connect(self._on_input_mode_toggled)
         self.sfc_toggle_btn.setChecked(False)  # 默认文本模式
 
@@ -2956,12 +2939,12 @@ class PLCSystemUI(QMainWindow):
 
         plc_row = QHBoxLayout()
         plc_row.setSpacing(8)
-        plc_label = QLabel("PLC 型号")
+        plc_label = QLabel(tr('PLC 型号'))
         plc_label.setObjectName("SectionLabel")
         self.plc_combo = QComboBox()
         self.plc_combo.addItems(["FX3U", "FX5U"])
         self.plc_combo.setFixedHeight(34)
-        self.plc_combo.setToolTip("选择目标 PLC；地址、特殊软元件和指令规则随型号切换")
+        self.plc_combo.setToolTip(tr('选择目标 PLC；地址、特殊软元件和指令规则随型号切换'))
         try:
             configured_model = str(
                 load_full_config().get("plc_model", "FX3U")
@@ -2979,7 +2962,7 @@ class PLCSystemUI(QMainWindow):
 
         target_row = QHBoxLayout()
         target_row.setSpacing(8)
-        target_label = QLabel("输出格式")
+        target_label = QLabel(tr('输出格式'))
         target_label.setObjectName("SectionLabel")
         target_row.addWidget(target_label)
         target_row.addWidget(self.lang_combo, stretch=1)
@@ -2987,7 +2970,7 @@ class PLCSystemUI(QMainWindow):
         left_layout.addWidget(settings_surface)
 
         left_layout.addWidget(self.input_stack, stretch=1)
-        input_helper = QLabel("生成前会进行需求确认、软元件一致性和双线圈硬校验。")
+        input_helper = QLabel(tr('生成前会进行需求确认、软元件一致性和双线圈硬校验。'))
         input_helper.setObjectName("HelperText")
         input_helper.setWordWrap(True)
         left_layout.addWidget(input_helper)
@@ -3002,11 +2985,11 @@ class PLCSystemUI(QMainWindow):
          
         result_header = QHBoxLayout()
         result_header.setSpacing(8)
-        self.canvas_title = QLabel("梯形图预览")
+        self.canvas_title = QLabel(tr('梯形图预览'))
         self.canvas_title.setObjectName("CanvasTitle")
         self.format_badge = QLabel("GX Works2")
         self.format_badge.setObjectName("FormatBadge")
-        self.result_status = QLabel("等待生成")
+        self.result_status = QLabel(tr('等待生成'))
         self.result_status.setObjectName("StatusBadge")
         result_header.addWidget(self.canvas_title)
         result_header.addWidget(self.format_badge)
@@ -3032,7 +3015,7 @@ class PLCSystemUI(QMainWindow):
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-        self.export_csv_btn = QPushButton("导出 GX Works2 CSV")
+        self.export_csv_btn = QPushButton(tr('导出 GX Works2 CSV'))
         self.export_csv_btn.setObjectName("PrimaryButton")
         self.export_csv_btn.setFixedHeight(42)
         self.export_csv_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -3049,13 +3032,13 @@ class PLCSystemUI(QMainWindow):
 
         self.st_viewer = QTextEdit()
         self.st_viewer.setReadOnly(True)
-        self.st_viewer.setAccessibleName("ST 代码预览")
+        self.st_viewer.setAccessibleName(tr('ST 代码预览'))
         self.st_viewer.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse | 
             Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
 
-        self.copy_btn = QPushButton("复制 ST 代码")
+        self.copy_btn = QPushButton(tr('复制 ST 代码'))
         self.copy_btn.setObjectName("PrimaryButton")
         self.copy_btn.setFixedHeight(42)
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -3086,7 +3069,7 @@ class PLCSystemUI(QMainWindow):
     def start_compile(self):
         user_input = self.input_edit.toPlainText().strip()
         if not user_input:
-            QMessageBox.warning(self, "警告", "错误：请输入您的工业控制需求")
+            QMessageBox.warning(self, tr('警告'), tr('错误：请输入您的工业控制需求'))
             return
         if not self._api_key_available():
             self.open_api_config_dialog()
@@ -3115,10 +3098,10 @@ class PLCSystemUI(QMainWindow):
 
         # ---- 每次编译都先跑阶段1分析（含多轮编辑） ----
         self.compile_btn.setEnabled(False)
-        self.compile_btn.setText("正在分析需求...")
-        self.result_status.setText("需求分析中")
+        self.compile_btn.setText(tr('正在分析需求...'))
+        self.result_status.setText(tr('需求分析中'))
 
-        analysis_input = f"目标 PLC 型号：{plc_model}\n{user_input}"
+        analysis_input = tr('目标 PLC 型号：{v0}\n{v1}', v0=plc_model, v1=user_input)
         self._analysis_thread = AnalysisThread(
             self._active_task_id,
             analysis_input,
@@ -3150,8 +3133,8 @@ class PLCSystemUI(QMainWindow):
         if task_id != self._active_task_id:
             return
         self.compile_btn.setEnabled(True)
-        self.compile_btn.setText("分析并生成")
-        self.result_status.setText("等待确认")
+        self.compile_btn.setText(tr('分析并生成'))
+        self.result_status.setText(tr('等待确认'))
         self._analysis_thread = None
         analysis_json = dict(analysis_json or {})
         analysis_json["plc_model"] = self._pending_plc_model
@@ -3182,19 +3165,19 @@ class PLCSystemUI(QMainWindow):
                 confirmed,
             )
         else:
-            self.result_status.setText("等待修改")
+            self.result_status.setText(tr('等待修改'))
 
     def _on_analysis_failed(self, task_id, err_msg):
         """阶段1失败 → 回退到直接编译"""
         if task_id != self._active_task_id:
             return
         self.compile_btn.setEnabled(True)
-        self.compile_btn.setText("分析并生成")
-        self.result_status.setText("切换生成模式")
+        self.compile_btn.setText(tr('分析并生成'))
+        self.result_status.setText(tr('切换生成模式'))
         self._analysis_thread = None
-        print(f"需求分析失败，跳过确认直接编译: {err_msg}")
+        print(tr('需求分析失败，跳过确认直接编译: {v0}', v0=err_msg))
         self.thinking_panel.show_error(
-            f"需求确认暂不可用，将按所选 {self._pending_plc_model} 直接生成并执行硬校验：{err_msg}"
+            tr('需求确认暂不可用，将按所选 {v0} 直接生成并执行硬校验：{v1}', v0=self._pending_plc_model, v1=err_msg)
         )
         self._launch_compiler(
             self._pending_user_input,
@@ -3213,20 +3196,20 @@ class PLCSystemUI(QMainWindow):
 
         summary = confirmed.get("summary", "")
         if summary:
-            parts.append(f"确认后的需求摘要: {summary}")
+            parts.append(tr('确认后的需求摘要: {v0}', v0=summary))
 
         # 用户选的方案
         app = confirmed.get("selected_approach")
         if app:
-            parts.append(f"方案: {app.get('name', '')}——{app.get('description', '')}")
+            parts.append(tr('方案: {v0}——{v1}', v0=app.get('name', ''), v1=app.get('description', '')))
             generation_guide = app.get("generation_guide", "")
             if generation_guide:
-                parts.append(f"方案生成要点: {generation_guide}")
+                parts.append(tr('方案生成要点: {v0}', v0=generation_guide))
 
         # 用户补充说明
         notes = confirmed.get("user_notes", "")
         if notes:
-            parts.append(f"用户补充: {notes}")
+            parts.append(tr('用户补充: {v0}', v0=notes))
 
         answers = confirmed.get("missing_answers", {})
         if answers:
@@ -3236,7 +3219,7 @@ class PLCSystemUI(QMainWindow):
         # ---- I/O 分配放在末尾，对抗注意力衰减 ----
         io_raw = confirmed.get("io_allocation_raw", "")
         if io_raw:
-            parts.append(f"\n【软元件分配——整个程序必须一致使用，device_comments 与 rungs 中的地址必须完全匹配】\n{io_raw}")
+            parts.append('\n【软元件分配——整个程序必须一致使用，device_comments 与 rungs 中的地址必须完全匹配】\n{v0}'.format(v0=io_raw))
 
         return "\n".join(parts)
 
@@ -3250,9 +3233,9 @@ class PLCSystemUI(QMainWindow):
     ):
         """启动 CompilerThread（阶段3 或跳过分析的直接编译）"""
         self.compile_btn.setEnabled(False)
-        self.compile_btn.setText("正在生成程序...")
-        self.result_status.setText("程序生成中")
-        print(f"准备编译，当前思考模式为: {effort}，目标语言: {target_mode}")
+        self.compile_btn.setText(tr('正在生成程序...'))
+        self.result_status.setText(tr('程序生成中'))
+        print(tr('准备编译，当前思考模式为: {v0}，目标语言: {v1}', v0=effort, v1=target_mode))
         task_id = self._active_task_id or uuid.uuid4().hex
         self._active_task_id = task_id
         self._active_output_dir = Path.cwd() / "generated_output"
@@ -3325,15 +3308,15 @@ class PLCSystemUI(QMainWindow):
             message = ""
             severity = ""
         labels = {
-            "connecting": "连接模型",
-            "parsing": "解析输出",
-            "parsed": "解析完成",
-            "fallback": "切换普通调用",
-            "repairing": "自动修正",
-            "repairing_remote": "请求模型修正",
-            "repaired_local": "本地修正完成",
+            "connecting": tr('连接模型'),
+            "parsing": tr('解析输出'),
+            "parsed": tr('解析完成'),
+            "fallback": tr('切换普通调用'),
+            "repairing": tr('自动修正'),
+            "repairing_remote": tr('请求模型修正'),
+            "repaired_local": tr('本地修正完成'),
         }
-        label = labels.get(stage, message or "生成中")
+        label = labels.get(stage, message or tr('生成中'))
         self.result_status.setText(label)
         self.thinking_panel.set_status(label)
         if message and severity == "warning":
@@ -3344,58 +3327,58 @@ class PLCSystemUI(QMainWindow):
     def _on_stream_status(self, status: str):
         """处理流式调用的状态变化。"""
         if status == "connecting":
-            self.thinking_panel.set_status("连接中...")
-            self.result_status.setText("连接模型")
+            self.thinking_panel.set_status(tr('连接中...'))
+            self.result_status.setText(tr('连接模型'))
         elif status == "repairing":
-            self.thinking_panel.set_status("自动修复中")
-            self.result_status.setText("自动修复中")
+            self.thinking_panel.set_status(tr('自动修复中'))
+            self.result_status.setText(tr('自动修复中'))
         elif status == "done":
-            self.thinking_panel.set_status("解析输出中")
-            self.result_status.setText("解析输出中")
+            self.thinking_panel.set_status(tr('解析输出中'))
+            self.result_status.setText(tr('解析输出中'))
         elif status.startswith("error:"):
-            self.thinking_panel.show_error(f"流式调用失败，已降级至普通模式: {status[6:].strip()}")
-            self.thinking_panel.set_status("降级模式")
-            self.result_status.setText("降级生成")
+            self.thinking_panel.show_error(tr('流式调用失败，已降级至普通模式: {v0}', v0=status[6:].strip()))
+            self.thinking_panel.set_status(tr('降级模式'))
+            self.result_status.setText(tr('降级生成'))
 
     def on_compile_failure(self, task_id, err_msg):
         if task_id != self._active_task_id:
             return
         self.compile_btn.setEnabled(True)
-        self.compile_btn.setText("分析并生成")
-        self.thinking_panel.set_status("编译失败")
-        self.result_status.setText("生成失败")
+        self.compile_btn.setText(tr('分析并生成'))
+        self.thinking_panel.set_status(tr('编译失败'))
+        self.result_status.setText(tr('生成失败'))
         self.thinking_panel.show_error(err_msg)
-        QMessageBox.critical(self, "编译错误", err_msg)
+        QMessageBox.critical(self, tr('编译错误'), err_msg)
     
     def toggle_maximize(self):
         if self.isMaximized():
             self.showNormal()
             self.max_btn.setText("□")
-            self.max_btn.setToolTip("最大化")
+            self.max_btn.setToolTip(tr('最大化'))
         else:
             self.showMaximized()
             self.max_btn.setText("❐")
-            self.max_btn.setToolTip("还原")
+            self.max_btn.setToolTip(tr('还原'))
 
     def notify_csv_export(self):
         if os.path.exists("plc_import_program.csv"):
-            QMessageBox.information(self, "导出成功", "GX Works2 兼容的程序明细表已生成！\n文件名：plc_import_program.csv\n\n您可以在 GX Works2 中点击【工程】->【打开其他格式文件】->【导入 Excel 语句表】直接引入此程序逻辑。")
+            QMessageBox.information(self, tr('导出成功'), tr('GX Works2 兼容的程序明细表已生成！\n文件名：plc_import_program.csv\n\n您可以在 GX Works2 中点击【工程】->【打开其他格式文件】->【导入 Excel 语句表】直接引入此程序逻辑。'))
         else:
-            QMessageBox.warning(self, "提示", "请先输入需求并完成【编译】后再尝试导出！")
+            QMessageBox.warning(self, tr('提示'), tr('请先输入需求并完成【编译】后再尝试导出！'))
     def on_compile_success(self, task_id, result):
         """线程执行成功后的刷新与展示槽函数"""
         if task_id != self._active_task_id:
             return
         self.compile_btn.setEnabled(True)
-        self.compile_btn.setText("分析并生成")
+        self.compile_btn.setText(tr('分析并生成'))
         self._last_result = dict(result or {})
         contract_mismatch = self._last_result.get("contract_mismatch")
         if contract_mismatch:
-            self.thinking_panel.set_status("方案约束待处理")
-            self.result_status.setText("CSV 已生成 · 方案约束待处理")
+            self.thinking_panel.set_status(tr('方案约束待处理'))
+            self.result_status.setText(tr('CSV 已生成 · 方案约束待处理'))
         else:
-            self.thinking_panel.set_status("已完成")
-            self.result_status.setText("生成完成 · 校验通过")
+            self.thinking_panel.set_status(tr('已完成'))
+            self.result_status.setText(tr('生成完成 · 校验通过'))
         self._last_target_mode = self._last_result.get("target_mode")
         try:
             artifacts = self._last_result.get("artifacts", {})
@@ -3413,13 +3396,13 @@ class PLCSystemUI(QMainWindow):
                 self.svg_viewer.setFixedSize(safe_width, safe_height)
                 self.svg_viewer.load(str(output_path))
                 gx_tool = (
-                    "GX Works3 目标梯形图"
+                    tr('GX Works3 目标梯形图')
                     if self._current_plc_model() == "FX5U"
-                    else "梯形图与 GX Works2 语句表"
+                    else tr('梯形图与 GX Works2 语句表')
                 )
                 if contract_mismatch:
                     issues = contract_mismatch.get("issues") or [
-                        contract_mismatch.get("message", "方案约束未满足")
+                        contract_mismatch.get("message", tr('方案约束未满足'))
                     ]
                     issue_text = "；".join(str(item) for item in issues if item)
                     program_csv_path = self._active_output_dir / artifacts.get(
@@ -3427,13 +3410,9 @@ class PLCSystemUI(QMainWindow):
                     )
                     answer = QMessageBox.question(
                         self,
-                        "CSV 已生成，方案约束待处理",
+                        tr('CSV 已生成，方案约束待处理'),
                         (
-                            "原始程序已经生成，CSV 不会因为方案约束问题被丢弃。\n"
-                            f"CSV：{program_csv_path}\n\n"
-                            "你可以先切换到 GX Works2 导入并检查这个版本。\n\n"
-                            f"未满足的方案约束：{issue_text}\n\n"
-                            "是否让 AI 基于当前结果进行修复？"
+                            tr('原始程序已经生成，CSV 不会因为方案约束问题被丢弃。\nCSV：{v0}\n\n你可以先切换到 GX Works2 导入并检查这个版本。\n\n未满足的方案约束：{v1}\n\n是否让 AI 基于当前结果进行修复？', v0=program_csv_path, v1=issue_text)
                         ),
                         QMessageBox.StandardButton.Yes
                         | QMessageBox.StandardButton.No,
@@ -3445,9 +3424,7 @@ class PLCSystemUI(QMainWindow):
                         and self._last_confirmed_spec is not None
                     ):
                         repair_request = (
-                            "基于当前已生成梯形图，仅修复以下已确认方案约束问题："
-                            f"{issue_text}。保持其余逻辑、I/O、参数和已选方案不变；"
-                            "不得重新分析需求或更换实现方案。"
+                            tr('基于当前已生成梯形图，仅修复以下已确认方案约束问题：{v0}。保持其余逻辑、I/O、参数和已选方案不变；不得重新分析需求或更换实现方案。', v0=issue_text)
                         )
                         previous = copy.deepcopy(self._last_ladder_json)
                         confirmed = copy.deepcopy(self._last_confirmed_spec)
@@ -3462,8 +3439,8 @@ class PLCSystemUI(QMainWindow):
                 else:
                     QMessageBox.information(
                         self,
-                        "成功",
-                        f"{gx_tool}生成成功，结构和型号硬校验已通过！",
+                        tr('成功'),
+                        tr('{v0}生成成功，结构和型号硬校验已通过！', v0=gx_tool),
                     )
             elif self._last_target_mode == "st":
                 output_path = self._active_output_dir / artifacts.get("st", "")
@@ -3473,13 +3450,12 @@ class PLCSystemUI(QMainWindow):
                         self.st_viewer.setPlainText(f.read())
                 else:
                     self.st_viewer.setPlainText(str(output_path))
-                QMessageBox.information(self, "成功", "ST 结构化文本编译成功！")
+                QMessageBox.information(self, tr('成功'), tr('ST 结构化文本编译成功！'))
         except Exception as e:
             QMessageBox.critical(
                 self,
-                "错误",
-                f"界面渲染失败: {naturalize_display_text(e)}\n"
-                "(注: 后端文件已正常生成，不影响导入)",
+                tr('错误'),
+                tr('界面渲染失败: {v0}\n(注: 后端文件已正常生成，不影响导入)', v0=naturalize_display_text(e)),
             )
     def open_api_config_dialog(self):
         """打开 API 请求格式配置对话框"""
@@ -3491,12 +3467,11 @@ class PLCSystemUI(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(
                     self,
-                    "错误",
-                    f"重新加载模型服务失败:\n"
-                    f"{naturalize_display_text(e)}",
+                    tr('错误'),
+                    tr('重新加载模型服务失败:\n{v0}', v0=naturalize_display_text(e)),
                 )
                 return
-            QMessageBox.information(self, "成功", "API 配置已更新并生效。")
+            QMessageBox.information(self, tr('成功'), tr('API 配置已更新并生效。'))
 
     @staticmethod
     def _api_key_available():
@@ -3521,9 +3496,8 @@ class PLCSystemUI(QMainWindow):
         except Exception as error:
             QMessageBox.critical(
                 self,
-                "API 配置错误",
-                f"重新加载失败：\n"
-                f"{naturalize_display_text(error)}",
+                tr('API 配置错误'),
+                tr('重新加载失败：\n{v0}', v0=naturalize_display_text(error)),
             )
             return False
         return self._api_key_available()
@@ -3541,9 +3515,9 @@ class PLCSystemUI(QMainWindow):
         self.svg_viewer.load(bytearray(b''))
 
         self.thinking_panel.content_edit.clear()
-        self.thinking_panel.set_status("等待中")
+        self.thinking_panel.set_status(tr('等待中'))
         self.thinking_panel._collapse()
-        self.result_status.setText("等待生成")
+        self.result_status.setText(tr('等待生成'))
 
         chat_file = "chat_history.json"
         if os.path.exists(chat_file):
@@ -3553,9 +3527,8 @@ class PLCSystemUI(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(
                     self,
-                    "警告",
-                    f"清理本地历史记录失败: "
-                    f"{naturalize_display_text(e)}",
+                    tr('警告'),
+                    tr('清理本地历史记录失败: {v0}', v0=naturalize_display_text(e)),
                 )
                 return
 
@@ -3566,13 +3539,12 @@ class PLCSystemUI(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(
                     self,
-                    "警告",
-                    f"清理确认规格失败: "
-                    f"{naturalize_display_text(e)}",
+                    tr('警告'),
+                    tr('清理确认规格失败: {v0}', v0=naturalize_display_text(e)),
                 )
                 return
 
-        QMessageBox.information(self, "成功", "已开启新对话，历史记录已清空！")      
+        QMessageBox.information(self, tr('成功'), tr('已开启新对话，历史记录已清空！'))
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and event.position().y() < 36:
             self._is_tracking = True
@@ -4201,7 +4173,7 @@ class SFCWorkspaceDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.generated_text = ""
-        self.setWindowTitle("顺序功能图编辑器")
+        self.setWindowTitle(tr('顺序功能图编辑器'))
         prepare_frameless_dialog(self)
         self.setMinimumSize(760, 520)
         self.resize(1120, 760)
@@ -4211,7 +4183,7 @@ class SFCWorkspaceDialog(QDialog):
         layout.setSpacing(0)
         self.title_bar = DialogTitleBar(
             self,
-            "顺序功能图编辑器",
+            tr('顺序功能图编辑器'),
             icon_name="circuit-board",
         )
         layout.addWidget(self.title_bar)
@@ -4222,13 +4194,13 @@ class SFCWorkspaceDialog(QDialog):
         self.editor.text_generated.connect(self._accept_text)
         content_layout.addWidget(self.editor, 1)
         actions = QHBoxLayout()
-        hint = QLabel("完成流程图后，将其转换为结构化需求并插入当前对话。")
+        hint = QLabel(tr('完成流程图后，将其转换为结构化需求并插入当前对话。'))
         hint.setObjectName("SectionCaption")
-        cancel = QPushButton("取消")
-        insert = QPushButton("插入到需求")
+        cancel = QPushButton(tr('取消'))
+        insert = QPushButton(tr('插入到需求'))
         insert.setObjectName("PrimaryButton")
-        set_codicon(cancel, "close", "取消", 10)
-        set_codicon(insert, "send", "插入到需求", 10)
+        set_codicon(cancel, "close", tr('取消'), 10)
+        set_codicon(insert, "send", tr('插入到需求'), 10)
         cancel.clicked.connect(self.reject)
         insert.clicked.connect(self._convert)
         actions.addWidget(hint)
@@ -4256,7 +4228,7 @@ class SFCWorkspaceDialog(QDialog):
         text = sfc_to_text(self.editor.scene, self.editor.io_config)
         if not text.strip():
             show_sfc_message(
-                self, "流程图为空", "请先添加步骤和转移条件。", "warning"
+                self, tr('流程图为空'), tr('请先添加步骤和转移条件。'), "warning"
             )
             return
         self._accept_text(text)
@@ -4273,7 +4245,7 @@ class WorkbenchConfirmDialog(QDialog):
         self,
         title,
         message,
-        confirm_text="确认",
+        confirm_text=tr('确认'),
         parent=None,
     ):
         super().__init__(parent)
@@ -4374,16 +4346,16 @@ class WorkbenchConfirmDialog(QDialog):
         message_row.addWidget(self.message_label, 1)
         body_layout.addLayout(message_row)
 
-        hint = QLabel("此操作无法撤销。")
+        hint = QLabel(tr('此操作无法撤销。'))
         hint.setObjectName("ConfirmHint")
         body_layout.addWidget(hint)
 
         actions = QHBoxLayout()
         actions.addStretch()
-        self.cancel_button = QPushButton("取消")
+        self.cancel_button = QPushButton(tr('取消'))
         self.confirm_button = QPushButton(confirm_text)
         self.confirm_button.setObjectName("DangerButton")
-        set_codicon(self.cancel_button, "close", "取消", 10)
+        set_codicon(self.cancel_button, "close", tr('取消'), 10)
         set_codicon(self.confirm_button, "trash", confirm_text, 10)
         self.cancel_button.clicked.connect(self.reject)
         self.confirm_button.clicked.connect(self.accept)
@@ -4514,8 +4486,14 @@ class WindowResizeHandle(QWidget):
 class _IndustrialWorkbenchUI(QMainWindow):
     def __init__(self):
         super().__init__()
+        from i18n import set_language, on_language_changed
+        try:
+            set_language(load_full_config().get("language", "zh-CN"))
+        except (OSError, ValueError):
+            pass
+        on_language_changed(self._language_changed)
         load_codicon_font()
-        self.setWindowTitle("PLC AI 编程工作台")
+        self.setWindowTitle(tr('PLC AI 编程工作台'))
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setWindowFlag(Qt.WindowType.WindowSystemMenuHint, True)
         self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, True)
@@ -4611,37 +4589,37 @@ class _IndustrialWorkbenchUI(QMainWindow):
         top_layout = QHBoxLayout(self.title_bar)
         top_layout.setContentsMargins(8, 0, 0, 0)
         top_layout.setSpacing(5)
-        self.project_title = QLabel("PLC AI 编程工作台")
+        self.project_title = QLabel(tr('PLC AI 编程工作台'))
         self.project_title.setObjectName("ProjectTitle")
         brand_icon = QLabel(codicon("circuit-board"))
         brand_icon.setObjectName("AppIcon")
         brand_icon.setFont(codicon_font(15))
         brand_icon.setFixedWidth(24)
         brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        brand_icon.setToolTip("PLC AI 编程工作台")
+        brand_icon.setToolTip(tr('PLC AI 编程工作台'))
         self.model_combo = BorderedComboBox()
         self.model_combo.addItems(self._load_plc_models())
         self.target_combo = BorderedComboBox()
-        self.target_combo.addItem("梯形图 / GX Works2", "ladder")
-        self.target_combo.addItem("ST 结构化文本", "st")
+        self.target_combo.addItem(tr('梯形图 / GX Works2'), "ladder")
+        self.target_combo.addItem(tr('ST 结构化文本'), "st")
         self.workflow_combo = BorderedComboBox()
-        self.workflow_combo.addItem("生成", "generate")
-        self.workflow_combo.addItem("版本评审", "review")
-        self.workflow_combo.addItem("故障调试", "debug")
+        self.workflow_combo.addItem(tr('生成'), "generate")
+        self.workflow_combo.addItem(tr('版本评审'), "review")
+        self.workflow_combo.addItem(tr('故障调试'), "debug")
         for combo in (
             self.model_combo,
             self.target_combo,
             self.workflow_combo,
         ):
             self._configure_combo_popup(combo)
-        self.sfc_button = QPushButton("流程图输入")
+        self.sfc_button = QPushButton(tr('流程图输入'))
         self.theme_button = QPushButton()
-        self.settings_button = QPushButton("API 设置")
+        self.settings_button = QPushButton(tr('设置'))
         self.sfc_button.setObjectName("ToolbarButton")
         self.theme_button.setObjectName("ThemeButton")
         self.settings_button.setObjectName("ToolbarButton")
-        set_codicon(self.sfc_button, "circuit-board", "流程图", 10)
-        set_codicon(self.settings_button, "settings-gear", "API 设置", 10)
+        set_codicon(self.sfc_button, "circuit-board", tr('流程图'), 10)
+        set_codicon(self.settings_button, "settings-gear", tr('设置'), 10)
         self.theme_button.setFixedSize(32, 28)
         theme_icon_font = QFont("Segoe UI Symbol", 14)
         self.theme_button.setFont(theme_icon_font)
@@ -4656,9 +4634,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
         top_layout.addStretch()
         self.plc_label = QLabel("PLC")
         self.plc_label.setObjectName("TopBarLabel")
-        self.output_label = QLabel("输出")
+        self.output_label = QLabel(tr('输出'))
         self.output_label.setObjectName("TopBarLabel")
-        self.workflow_label = QLabel("工作流")
+        self.workflow_label = QLabel(tr('工作流'))
         self.workflow_label.setObjectName("TopBarLabel")
         top_layout.addWidget(self.plc_label)
         top_layout.addWidget(self.model_combo)
@@ -4670,13 +4648,13 @@ class _IndustrialWorkbenchUI(QMainWindow):
         top_layout.addWidget(self.theme_button)
         top_layout.addWidget(self.settings_button)
         self.minimize_button = self._window_button(
-            "chrome-minimize", "WindowMinButton", "最小化"
+            "chrome-minimize", "WindowMinButton", tr('最小化')
         )
         self.maximize_button = self._window_button(
-            "chrome-maximize", "WindowMaxButton", "最大化"
+            "chrome-maximize", "WindowMaxButton", tr('最大化')
         )
         self.close_button = self._window_button(
-            "chrome-close", "WindowCloseButton", "关闭"
+            "chrome-close", "WindowCloseButton", tr('关闭')
         )
         self.minimize_button.clicked.connect(self.showMinimized)
         self.maximize_button.clicked.connect(self._toggle_window_maximized)
@@ -4735,16 +4713,16 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 "chrome-restore",
                 point_size=10,
             )
-            self.maximize_button.setToolTip("还原")
-            self.maximize_button.setAccessibleName("还原")
+            self.maximize_button.setToolTip(tr('还原'))
+            self.maximize_button.setAccessibleName(tr('还原'))
         else:
             set_codicon(
                 self.maximize_button,
                 "chrome-maximize",
                 point_size=10,
             )
-            self.maximize_button.setToolTip("最大化")
-            self.maximize_button.setAccessibleName("最大化")
+            self.maximize_button.setToolTip(tr('最大化'))
+            self.maximize_button.setAccessibleName(tr('最大化'))
 
     def changeEvent(self, event):
         super().changeEvent(event)
@@ -4844,8 +4822,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.status_project = QLabel()
         self.status_runtime = QLabel()
         self.status_mode = QLabel()
-        self.status_project.setText("项目: 未选择")
-        self.status_runtime.setText("状态: 就绪")
+        self.status_project.setText(tr('项目: 未选择'))
+        self.status_runtime.setText(tr('状态: 就绪'))
         self.status_mode.setText("PLC: FX3U")
         bar.addWidget(self.status_project)
         bar.addWidget(self.status_runtime)
@@ -4861,12 +4839,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
         layout.setSpacing(7)
 
         header = QHBoxLayout()
-        title = QLabel("项目会话")
+        title = QLabel(tr('项目会话'))
         title.setObjectName("PaneTitle")
-        new_button = QPushButton("新建")
+        new_button = QPushButton(tr('新建'))
         new_button.setObjectName("PrimaryButton")
-        new_button.setToolTip("新建项目")
-        set_codicon(new_button, "new-file", "新建", 9)
+        new_button.setToolTip(tr('新建项目'))
+        set_codicon(new_button, "new-file", tr('新建'), 9)
         new_button.clicked.connect(self._new_project)
         header.addWidget(title)
         header.addStretch()
@@ -4891,10 +4869,11 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.project_list.itemDoubleClicked.connect(self._rename_project)
         layout.addWidget(self.project_list, 3)
 
-        versions_title = QLabel("生成版本")
+        versions_title = QLabel(tr('生成版本'))
         versions_title.setObjectName("PaneTitle")
-        versions_hint = QLabel("双击重命名 · 右键管理项目")
+        versions_hint = QLabel(tr('双击重命名 · 右键管理项目'))
         versions_hint.setObjectName("SectionCaption")
+        versions_hint.setWordWrap(True)
         layout.addWidget(versions_title)
         layout.addWidget(versions_hint)
         self.version_list = QListWidget()
@@ -4915,9 +4894,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
         layout.setSpacing(8)
 
         header = QHBoxLayout()
-        self.conversation_title = QLabel("需求与修改")
+        self.conversation_title = QLabel(tr('需求与修改'))
         self.conversation_title.setObjectName("PaneTitle")
-        self.conversation_status = QLabel("等待输入")
+        self.conversation_status = QLabel(tr('等待输入'))
         self.conversation_status.setObjectName("SectionCaption")
         header.addWidget(self.conversation_title)
         header.addStretch()
@@ -4943,7 +4922,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         composer_layout = QVBoxLayout(composer)
         composer_layout.setContentsMargins(0, 0, 0, 0)
         composer_layout.setSpacing(6)
-        self.task_target_badge = QLabel("任务目标：尚未选择版本")
+        self.task_target_badge = QLabel(tr('任务目标：尚未选择版本'))
         self.task_target_badge.setObjectName("SectionCaption")
         self.task_target_badge.setWordWrap(True)
         composer_layout.addWidget(self.task_target_badge)
@@ -4951,7 +4930,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.composer_edit.setMinimumHeight(82)
         self.composer_edit.setMaximumHeight(150)
         self.composer_edit.setPlaceholderText(
-            "描述控制需求，或输入对当前版本的修改要求。Ctrl+Enter 发送。"
+            tr('描述控制需求，或输入对当前版本的修改要求。Ctrl+Enter 发送。')
         )
         self.image_attachment_scroll = QScrollArea()
         self.image_attachment_scroll.setObjectName("ImageAttachmentStrip")
@@ -4973,23 +4952,23 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.debug_context_widget = DebugContextWidget()
         self.debug_context_widget.setVisible(False)
         action_row = QHBoxLayout()
-        self.image_attachment_button = QPushButton("添加图片")
+        self.image_attachment_button = QPushButton(tr('添加图片'))
         self.image_attachment_button.setObjectName("ToolbarButton")
         self.image_attachment_button.setToolTip(
-            "添加控制图、接线图、HMI 截图或需求截图"
+            tr('添加控制图、接线图、HMI 截图或需求截图')
         )
         set_codicon(
             self.image_attachment_button,
             "file-media",
-            "添加图片",
+            tr('添加图片'),
             10,
         )
         self.image_attachment_button.clicked.connect(self._choose_images)
-        self.composer_hint = QLabel("修改将基于最新成功版本")
+        self.composer_hint = QLabel(tr('修改将基于最新成功版本'))
         self.composer_hint.setObjectName("SectionCaption")
-        self.send_button = QPushButton("分析需求")
+        self.send_button = QPushButton(tr('分析需求'))
         self.send_button.setObjectName("PrimaryButton")
-        set_codicon(self.send_button, "sparkle", "分析需求", 10)
+        set_codicon(self.send_button, "sparkle", tr('分析需求'), 10)
         self.send_button.clicked.connect(self._send_requirement)
         action_row.addWidget(self.image_attachment_button)
         action_row.addWidget(self.composer_hint)
@@ -5020,28 +4999,26 @@ class _IndustrialWorkbenchUI(QMainWindow):
         profile = self._active_profile()
         if (profile.get("capabilities") or {}).get("multimodal"):
             return True
-        model = str(profile.get("model") or "当前模型")
+        model = str(profile.get("model") or tr('当前模型'))
         QMessageBox.warning(
             self,
-            "当前模型不支持图片",
-            f"{model} 不能接收图片。\n\n"
-            "请在“API 设置”中切换到 deepseek-v4-flash-vision-exp "
-            "或 glm-5.3-flash 后再发送。",
+            tr('当前模型不支持图片'),
+            tr('{v0} 不能接收图片。\n\n请在“API 设置”中切换到 deepseek-v4-flash-vision-exp 或 glm-5.3-flash 后再发送。', v0=model),
         )
         return False
 
     def _choose_images(self):
         if not self.current_project_id:
-            self.statusBar().showMessage("请先选择项目。", 3000)
+            self.statusBar().showMessage(tr('请先选择项目。'), 3000)
             return
         if not self._model_supports_images():
             self._ensure_image_capable_model()
             return
         paths, _selected_filter = QFileDialog.getOpenFileNames(
             self,
-            "添加图片",
+            tr('添加图片'),
             "",
-            "图片文件 (*.jpg *.jpeg *.png *.gif *.webp)",
+            tr('图片文件 (*.jpg *.jpeg *.png *.gif *.webp)'),
         )
         if paths:
             self._add_composer_image_paths(paths)
@@ -5053,7 +5030,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             try:
                 path = Path(value).resolve(strict=True)
             except (OSError, RuntimeError):
-                QMessageBox.warning(self, "图片不可用", f"找不到图片：{value}")
+                QMessageBox.warning(self, tr('图片不可用'), tr('找不到图片：{v0}', v0=value))
                 return False
             marker = str(path).casefold()
             if marker in markers:
@@ -5063,8 +5040,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         if len(existing) > MAX_IMAGE_ATTACHMENT_COUNT:
             QMessageBox.warning(
                 self,
-                "图片过多",
-                f"一次最多添加 {MAX_IMAGE_ATTACHMENT_COUNT} 张图片。",
+                tr('图片过多'),
+                tr('一次最多添加 {v0} 张图片。', v0=MAX_IMAGE_ATTACHMENT_COUNT),
             )
             return False
 
@@ -5073,18 +5050,18 @@ class _IndustrialWorkbenchUI(QMainWindow):
             try:
                 size = path.stat().st_size
                 if size <= 0:
-                    raise ValueError("图片内容为空")
+                    raise ValueError(tr('图片内容为空'))
                 if size > MAX_IMAGE_ATTACHMENT_BYTES:
-                    raise ValueError("单张图片不能超过 32 MiB")
+                    raise ValueError(tr('单张图片不能超过 32 MiB'))
                 total_bytes += size
                 if total_bytes > MAX_IMAGE_ATTACHMENTS_TOTAL_BYTES:
-                    raise ValueError("本次图片总大小不能超过 30 MiB")
+                    raise ValueError(tr('本次图片总大小不能超过 30 MiB'))
                 if not detect_image_media_type(path.read_bytes()):
-                    raise ValueError("仅支持 JPEG、PNG、GIF、WebP")
+                    raise ValueError(tr('仅支持 JPEG、PNG、GIF、WebP'))
             except (OSError, ValueError) as error:
                 QMessageBox.warning(
                     self,
-                    "图片不可用",
+                    tr('图片不可用'),
                     f"{path.name}：{error}",
                 )
                 return False
@@ -5135,7 +5112,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             remove = QPushButton("×")
             remove.setObjectName("ImageAttachmentRemove")
             remove.setFixedSize(20, 20)
-            remove.setToolTip(f"移除 {path.name}")
+            remove.setToolTip(tr('移除 {v0}', v0=path.name))
             remove.clicked.connect(
                 lambda _checked=False, value=stored_path: self._remove_composer_image(value)
             )
@@ -5167,7 +5144,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         for record in records or []:
             images.append(
                 ImageAttachment(
-                    str(record.get("filename") or "图片"),
+                    str(record.get("filename") or tr('图片')),
                     str(record.get("media_type") or ""),
                     self.store.load_image_attachment(project_id, record),
                 )
@@ -5200,9 +5177,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
         layout.setSpacing(8)
 
         header = QHBoxLayout()
-        title = QLabel("生成产物")
+        title = QLabel(tr('生成产物'))
         title.setObjectName("PaneTitle")
-        self.artifact_caption = QLabel("尚未生成")
+        self.artifact_caption = QLabel(tr('尚未生成'))
         self.artifact_caption.setObjectName("SectionCaption")
         header.addWidget(title)
         header.addStretch()
@@ -5211,7 +5188,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
         self.artifact_tabs = QTabWidget()
         self.preview_stack = QStackedWidget()
-        self.empty_preview = QLabel("完成一次生成后，这里会显示梯形图或 ST 程序。")
+        self.empty_preview = QLabel(tr('完成一次生成后，这里会显示梯形图或 ST 程序。'))
         self.empty_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_preview.setWordWrap(True)
         self.ladder_scroll = QScrollArea()
@@ -5243,10 +5220,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.source_view.setReadOnly(True)
         self.source_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.artifact_tabs.addTab(
-            self.preview_stack, codicon_icon("preview"), "预览"
+            self.preview_stack, codicon_icon("preview"), tr('预览')
         )
         self.artifact_tabs.addTab(
-            self.validation_view, codicon_icon("checklist"), "校验"
+            self.validation_view, codicon_icon("checklist"), tr('校验')
         )
         self.artifact_tabs.addTab(
             self.io_view, codicon_icon("symbol-field"), "I/O"
@@ -5263,7 +5240,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         simulation_progress_layout.setSpacing(5)
         simulation_progress_header = QHBoxLayout()
         simulation_progress_header.setContentsMargins(0, 0, 0, 0)
-        self.simulation_progress_title = QLabel("仿真进度")
+        self.simulation_progress_title = QLabel(tr('仿真进度'))
         self.simulation_progress_title.setObjectName("SimulationProgressTitle")
         self.simulation_progress_percent = QLabel("0%")
         self.simulation_progress_percent.setObjectName("SectionCaption")
@@ -5276,7 +5253,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.simulation_progress_bar.setValue(0)
         self.simulation_progress_bar.setTextVisible(False)
         simulation_progress_layout.addWidget(self.simulation_progress_bar)
-        self.simulation_progress_current = QLabel("等待开始")
+        self.simulation_progress_current = QLabel(tr('等待开始'))
         self.simulation_progress_current.setObjectName("SimulationProgressCurrent")
         self.simulation_progress_current.setWordWrap(True)
         simulation_progress_layout.addWidget(self.simulation_progress_current)
@@ -5289,71 +5266,71 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.simulation_progress_panel.setVisible(False)
         layout.addWidget(self.simulation_progress_panel)
 
-        self.export_button = QPushButton("导出当前版本")
+        self.export_button = QPushButton(tr('导出当前版本'))
         self.export_button.setObjectName("PrimaryButton")
-        set_codicon(self.export_button, "export", "导出当前版本", 10)
+        set_codicon(self.export_button, "export", tr('导出当前版本'), 10)
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self._export_current_version)
-        self.contract_repair_button = QPushButton("修复方案约束")
+        self.contract_repair_button = QPushButton(tr('修复方案约束'))
         self.contract_repair_button.setObjectName("PrimaryButton")
         self.contract_repair_button.setEnabled(False)
         self.contract_repair_button.setVisible(False)
         self.contract_repair_button.clicked.connect(
             self._repair_current_contract_mismatch
         )
-        self.gxworks2_sync_status = QLabel("GX：未检查")
+        self.gxworks2_sync_status = QLabel(tr('GX：未检查'))
         self.gxworks2_sync_status.setObjectName("SectionCaption")
         self.gxworks2_sync_status.setToolTip(
-            "显示当前项目版本与GX Works2中MAIN程序、软元件注释的同步状态"
+            tr('显示当前项目版本与GX Works2中MAIN程序、软元件注释的同步状态')
         )
-        self.gxworks2_import_button = QPushButton("写入 GX Works2")
+        self.gxworks2_import_button = QPushButton(tr('写入 GX Works2'))
         self.gxworks2_import_button.setObjectName("PrimaryButton")
         set_codicon(
             self.gxworks2_import_button,
             "export",
-            "写入 GX Works2",
+            tr('写入 GX Works2'),
             10,
         )
         self.gxworks2_import_button.setEnabled(False)
         self.gxworks2_import_button.setToolTip(
-            "将当前已验证版本写入GX Works2；写入前仍会自动备份并检查外部修改"
+            tr('将当前已验证版本写入GX Works2；写入前仍会自动备份并检查外部修改')
         )
         self.gxworks2_import_button.clicked.connect(
             self._publish_current_version_to_gxworks2
         )
-        self.gxworks2_pull_button = QPushButton("读取 GX Works2")
+        self.gxworks2_pull_button = QPushButton(tr('读取 GX Works2'))
         set_codicon(
             self.gxworks2_pull_button,
             "sync",
-            "读取 GX Works2",
+            tr('读取 GX Works2'),
             10,
         )
         self.gxworks2_pull_button.setEnabled(False)
         self.gxworks2_pull_button.setToolTip(
-            "读取GX Works2当前MAIN和注释；有差异时创建新的本地版本，不覆盖现有版本"
+            tr('读取GX Works2当前MAIN和注释；有差异时创建新的本地版本，不覆盖现有版本')
         )
         self.gxworks2_pull_button.clicked.connect(
             self._pull_current_version_from_gxworks2
         )
-        self.gxworks2_advanced_button = QPushButton("高级同步")
+        self.gxworks2_advanced_button = QPushButton(tr('高级同步'))
         self.gxworks2_advanced_button.setEnabled(False)
         self.gxworks2_advanced_button.setToolTip(
-            "比较双方与同步基线，仅在首次绑定、冲突或需要决定保留哪一方时使用"
+            tr('比较双方与同步基线，仅在首次绑定、冲突或需要决定保留哪一方时使用')
         )
         self.gxworks2_advanced_button.clicked.connect(
             self._sync_current_version_with_gxworks2
         )
-        self.gxw_reader_button = QPushButton("解析 GXW")
+        self.gxw_reader_button = QPushButton(tr('解析 GXW'))
         self.gxw_reader_button.setToolTip(
-            "实验性只读解析GX Works2 Structured Ladder/FBD工程；不会修改原GXW文件"
+            tr('实验性只读解析GX Works2 Structured Ladder/FBD工程；不会修改原GXW文件')
         )
         self.gxw_reader_button.clicked.connect(self._open_gxw_structured_reader)
-        self.simulator_test_button = QPushButton("仿真测试")
+        self.simulator_test_button = QPushButton(tr('仿真测试'))
         self.simulator_test_button.setObjectName("PrimaryButton")
         set_codicon(
             self.simulator_test_button,
             "run-all",
-            "仿真测试",
+            tr('仿真测试'),
             10,
         )
         self.simulator_test_button.setEnabled(False)
@@ -5367,19 +5344,19 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self._show_simulator_test_menu
         )
         self.simulator_test_button.setToolTip(
-            "复用当前版本已保存的测试方案；右键可强制重新生成"
+            tr('复用当前版本已保存的测试方案；右键可强制重新生成')
         )
-        actions = QHBoxLayout()
+        actions = QGridLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(8)
-        actions.addWidget(self.export_button)
-        actions.addWidget(self.contract_repair_button)
-        actions.addWidget(self.gxworks2_sync_status)
-        actions.addWidget(self.gxworks2_import_button)
-        actions.addWidget(self.gxworks2_pull_button)
-        actions.addWidget(self.gxworks2_advanced_button)
-        actions.addWidget(self.gxw_reader_button)
-        actions.addWidget(self.simulator_test_button)
+        actions.addWidget(self.gxworks2_sync_status, 0, 0, 1, 2)
+        actions.addWidget(self.contract_repair_button, 0, 2)
+        for index, button in enumerate((
+            self.export_button, self.gxw_reader_button, self.simulator_test_button,
+            self.gxworks2_import_button, self.gxworks2_pull_button, self.gxworks2_advanced_button,
+        )):
+            button.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+            actions.addWidget(button, 1 + index // 3, index % 3)
         layout.addLayout(actions)
         return pane
 
@@ -5447,8 +5424,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         )
         self.theme_manager.apply_application_palette()
         if hasattr(self, "theme_button"):
-            target = "浅色" if selected == ThemeMode.DARK else "深色"
-            tooltip = f"切换到{target}主题"
+            target = tr('浅色') if selected == ThemeMode.DARK else tr('深色')
+            tooltip = tr('切换到{v0}主题', v0=target)
             self.theme_button.setText("☀" if selected == ThemeMode.DARK else "☾")
             self.theme_button.setToolTip(tooltip)
             self.theme_button.setAccessibleName(tooltip)
@@ -5516,16 +5493,16 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self._clear_project_state()
 
     def _new_project(self):
-        name, ok = self._project_name_input("新建项目", "新项目")
+        name, ok = self._project_name_input(tr('新建项目'), tr('新项目'))
         if not ok:
             return
-        project = self.store.create_project(name=name.strip() or "新项目")
+        project = self.store.create_project(name=name.strip() or tr('新项目'))
         self._refresh_projects(project["id"])
 
     def _project_name_input(self, title, value):
         dialog = QInputDialog(self)
         dialog.setWindowTitle(title)
-        dialog.setLabelText("项目名称：")
+        dialog.setLabelText(tr('项目名称：'))
         dialog.setTextValue(value)
         dialog.setTextEchoMode(QLineEdit.EchoMode.Normal)
         colors = theme_tokens(self.theme_manager.current_theme)
@@ -5561,7 +5538,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         project = self.store.get_project(project_id)
         if not project:
             return
-        name, ok = self._project_name_input("重命名项目", project["name"])
+        name, ok = self._project_name_input(tr('重命名项目'), project["name"])
         if ok and name.strip():
             self.store.update_project_settings(project_id, name=name.strip())
             self._refresh_projects(project_id)
@@ -5575,11 +5552,11 @@ class _IndustrialWorkbenchUI(QMainWindow):
         menu = QMenu(self.project_list)
         menu.setObjectName("ProjectContextMenu")
         rename_action = menu.addAction(
-            codicon_icon("edit"), "重命名项目"
+            codicon_icon("edit"), tr('重命名项目')
         )
         menu.addSeparator()
         delete_action = menu.addAction(
-            codicon_icon("trash"), "删除项目"
+            codicon_icon("trash"), tr('删除项目')
         )
         selected = menu.exec(
             self.project_list.viewport().mapToGlobal(position)
@@ -5599,16 +5576,15 @@ class _IndustrialWorkbenchUI(QMainWindow):
         ):
             QMessageBox.warning(
                 self,
-                "无法删除项目",
-                "该项目正在分析或生成程序，请等待任务结束后再删除。",
+                tr('无法删除项目'),
+                tr('该项目正在分析或生成程序，请等待任务结束后再删除。'),
             )
             return False
 
         dialog = WorkbenchConfirmDialog(
-            "删除项目",
-            f"确定删除项目“{naturalize_display_text(project['name'])}”吗？\n\n"
-            "该项目的对话、确认规格和全部生成版本都会被永久删除。",
-            confirm_text="删除",
+            tr('删除项目'),
+            tr('确定删除项目“{v0}”吗？\n\n该项目的对话、确认规格和全部生成版本都会被永久删除。', v0=naturalize_display_text(project['name'])),
+            confirm_text=tr('删除'),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -5620,8 +5596,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         except Exception as error:
             QMessageBox.critical(
                 self,
-                "删除失败",
-                f"无法删除项目：\n{naturalize_display_text(error)}",
+                tr('删除失败'),
+                tr('无法删除项目：\n{v0}', v0=naturalize_display_text(error)),
             )
             return False
 
@@ -5643,7 +5619,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 selected_id = projects[0]["id"]
         self._refresh_projects(selected_id)
         self.statusBar().showMessage(
-            f"项目“{naturalize_display_text(project['name'])}”已删除", 4000
+            tr('项目“{v0}”已删除', v0=naturalize_display_text(project['name'])), 4000
         )
         return True
 
@@ -5666,11 +5642,11 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.workflow_combo.setEnabled(controls_enabled)
         self.sfc_button.setEnabled(controls_enabled)
         self.empty_preview.setText(
-            "完成一次生成后，这里会显示梯形图或 ST 程序。"
+            tr('完成一次生成后，这里会显示梯形图或 ST 程序。')
         )
         display_project_name = naturalize_display_text(project["name"])
         self.project_title.setText(f"PLC AI  /  {display_project_name}")
-        self.status_project.setText(f"项目: {display_project_name}")
+        self.status_project.setText(tr('项目: {v0}', v0=display_project_name))
         self.status_mode.setText(
             f"PLC: {project.get('plc_model', 'FX3U')}"
         )
@@ -5693,10 +5669,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
     def _clear_project_state(self):
         self.current_project_id = None
         self.current_version_id = None
-        self.project_title.setText("PLC AI 编程工作台")
-        self.status_project.setText("项目: 未选择")
+        self.project_title.setText(tr('PLC AI 编程工作台'))
+        self.status_project.setText(tr('项目: 未选择'))
         self.status_mode.setText("PLC: --")
-        self.conversation_status.setText("请新建项目")
+        self.conversation_status.setText(tr('请新建项目'))
         self.composer_edit.clear()
         self._clear_composer_images()
         self.composer_edit.setEnabled(False)
@@ -5711,7 +5687,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             widget = item.widget()
             if widget:
                 widget.deleteLater()
-        empty = QLabel("当前没有项目\n点击左侧“新建”开始")
+        empty = QLabel(tr('当前没有项目\n点击左侧“新建”开始'))
         empty.setObjectName("SectionCaption")
         empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty.setWordWrap(True)
@@ -5722,7 +5698,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.version_list.blockSignals(True)
         self.version_list.clear()
         self.version_list.blockSignals(False)
-        self.empty_preview.setText("新建项目并完成生成后，此处显示程序产物。")
+        self.empty_preview.setText(tr('新建项目并完成生成后，此处显示程序产物。'))
         self._clear_artifacts()
 
     @staticmethod
@@ -5778,22 +5754,22 @@ class _IndustrialWorkbenchUI(QMainWindow):
             )
             if self._model_supports_images():
                 self.image_attachment_button.setToolTip(
-                    "添加控制图、接线图、HMI 截图或需求截图"
+                    tr('添加控制图、接线图、HMI 截图或需求截图')
                 )
             else:
                 self.image_attachment_button.setToolTip(
-                    "当前模型不支持图片；请先在 API 设置中选择视觉模型"
+                    tr('当前模型不支持图片；请先在 API 设置中选择视觉模型')
                 )
 
         if workflow == "generate":
-            self.conversation_title.setText("需求与修改")
+            self.conversation_title.setText(tr('需求与修改'))
             self.composer_edit.setPlaceholderText(
-                "描述控制需求，或输入对最新成功版本的修改要求。Ctrl+Enter 发送。"
+                tr('描述控制需求，或输入对最新成功版本的修改要求。Ctrl+Enter 发送。')
             )
-            self.composer_hint.setText("修改将基于最新成功版本")
-            self.send_button.setText("分析并确认")
-            set_codicon(self.send_button, "sparkle", "分析并确认", 10)
-            self.task_target_badge.setText("生成前规格确认 · 完成后创建新版本")
+            self.composer_hint.setText(tr('修改将基于最新成功版本'))
+            self.send_button.setText(tr('分析并确认'))
+            set_codicon(self.send_button, "sparkle", tr('分析并确认'), 10)
+            self.task_target_badge.setText(tr('生成前规格确认 · 完成后创建新版本'))
             enabled = bool(project) and not busy
             self.model_combo.setEnabled(enabled)
             self.target_combo.setEnabled(enabled)
@@ -5802,16 +5778,16 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return
 
         is_review = workflow == "review"
-        self.conversation_title.setText("版本评审" if is_review else "故障调试")
+        self.conversation_title.setText(tr('版本评审') if is_review else tr('故障调试'))
         self.composer_edit.setPlaceholderText(
-            "可填写重点检查项；留空则执行完整版本评审。Ctrl+Enter 发送。"
+            tr('可填写重点检查项；留空则执行完整版本评审。Ctrl+Enter 发送。')
             if is_review
-            else "描述故障现象（必填），并可补充下方现场观测。Ctrl+Enter 发送。"
+            else tr('描述故障现象（必填），并可补充下方现场观测。Ctrl+Enter 发送。')
         )
         self.send_button.setText(
-            f"评审 {version_display_name(self.current_version_id)}"
+            tr('评审 {v0}', v0=version_display_name(self.current_version_id))
             if is_review
-            else "分析故障"
+            else tr('分析故障')
         )
         set_codicon(
             self.send_button,
@@ -5823,23 +5799,22 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.target_combo.setEnabled(False)
         self.sfc_button.setEnabled(False)
         if not selected:
-            self.task_target_badge.setText("任务目标：请先选择一个已生成版本")
-            self.composer_hint.setText("评审与调试严格绑定正在查看的版本")
+            self.task_target_badge.setText(tr('任务目标：请先选择一个已生成版本'))
+            self.composer_hint.setText(tr('评审与调试严格绑定正在查看的版本'))
             self.send_button.setEnabled(False)
             return
         version, _data = selected
         target_mode = version.get("target_mode", "")
         plc_model = version.get("plc_model") or project.get("plc_model", "FX3U")
         self.task_target_badge.setText(
-            f"任务目标：{version_display_name(version['id'])} · {plc_model} · "
-            f"{'梯形图' if target_mode == 'ladder' else 'ST'}"
+            tr('任务目标：{v0} · {v1} · {v2}', v0=version_display_name(version['id']), v1=plc_model, v2=tr('梯形图') if target_mode == 'ladder' else 'ST')
         )
         if target_mode != "ladder":
-            self.composer_hint.setText("首期仅支持梯形图版本评审与故障调试")
+            self.composer_hint.setText(tr('首期仅支持梯形图版本评审与故障调试'))
             self.send_button.setEnabled(False)
             return
         self.composer_hint.setText(
-            "先执行本地规则，再进行 AI 深查；无 API 时仍保留本地报告"
+            tr('先执行本地规则，再进行 AI 深查；无 API 时仍保留本地报告')
         )
         self.send_button.setEnabled(not busy)
 
@@ -5852,8 +5827,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         messages = project.get("messages", [])
         if not messages and not project.get("pending_review"):
             empty = QLabel(
-                "从一条控制需求开始。\n"
-                "首次生成会确认方案与 I/O，后续修改只确认差异。"
+                tr('从一条控制需求开始。\n首次生成会确认方案与 I/O，后续修改只确认差异。')
             )
             empty.setObjectName("SectionCaption")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -5951,7 +5925,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 "base_version_id": active_version_id,
                 "plc_model": active_version.get("plc_model")
                 or project.get("plc_model", "FX3U"),
-                "summary": "旧版本 validation.findings 已按统一报告格式展示。",
+                "summary": tr('旧版本 validation.findings 已按统一报告格式展示。'),
                 "findings": legacy_findings,
             }
             if selected_legacy and isinstance(selected_legacy[1], dict):
@@ -6010,7 +5984,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.version_list.blockSignals(True)
         self.version_list.clear()
         for version in reversed(project.get("versions", [])):
-            mode = "梯形图" if version.get("target_mode") == "ladder" else "ST"
+            mode = tr('梯形图') if version.get("target_mode") == "ladder" else "ST"
             parent = version.get("parent_version_id")
             lineage = f" ← {version_display_name(parent)}" if parent else ""
             item = QListWidgetItem(
@@ -6048,8 +6022,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         artifacts = version.get("artifacts", {})
         mode = version.get("target_mode")
         self.artifact_caption.setText(
-            f"{version_display_name(version_id)} · "
-            f"{'梯形图' if mode == 'ladder' else 'ST'} · 只读"
+            tr('{v0} · {v1} · 只读', v0=version_display_name(version_id), v1=tr('梯形图') if mode == 'ladder' else 'ST')
         )
         self.validation_view.setPlainText(
             self._format_validation_text(version.get("validation", {}))
@@ -6139,7 +6112,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self.st_preview.setPlainText(source_text)
             self.preview_stack.setCurrentIndex(2)
             self.source_view.setPlainText(source_text)
-            self.io_view.setPlainText("ST 版本未生成独立 I/O 注释表。")
+            self.io_view.setPlainText(tr('ST 版本未生成独立 I/O 注释表。'))
             self.artifact_tabs.setTabIcon(3, codicon_icon("code"))
             self.artifact_tabs.setTabText(3, "ST")
         self.export_button.setEnabled(True)
@@ -6155,7 +6128,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self._update_gx_sync_button_enabled()
         self._set_gx_sync_status(
             "unknown" if mode == "ladder" else "unknown",
-            "可直接写入或读取GX Works2；需要比较双方改动时使用“高级同步”" if mode == "ladder" else "ST版本不使用GX Works2梯形图同步",
+            tr('可直接写入或读取GX Works2；需要比较双方改动时使用“高级同步”') if mode == "ladder" else tr('ST版本不使用GX Works2梯形图同步'),
         )
         self.simulator_test_button.setEnabled(mode == "ladder")
         self._update_workflow_ui()
@@ -6167,7 +6140,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.validation_view.clear()
         self.io_view.clear()
         self.source_view.clear()
-        self.artifact_caption.setText("尚未生成")
+        self.artifact_caption.setText(tr('尚未生成'))
         self.export_button.setEnabled(False)
         self.contract_repair_button.setEnabled(False)
         self.contract_repair_button.setVisible(False)
@@ -6182,11 +6155,11 @@ class _IndustrialWorkbenchUI(QMainWindow):
         validation = validation or {}
         hard_messages = validation.get("messages", []) or []
         review_messages = validation.get("review_messages", []) or []
-        lines = ["硬校验"]
-        lines.extend(hard_messages or ["已通过"])
+        lines = [tr('硬校验')]
+        lines.extend(hard_messages or [tr('已通过')])
         lines.append("")
-        lines.append("评审建议")
-        lines.extend(review_messages or ["无"])
+        lines.append(tr('评审建议'))
+        lines.extend(review_messages or [tr('无')])
         return naturalize_display_text("\n".join(str(item) for item in lines))
 
     def _fit_ladder_to_viewport(self):
@@ -6257,15 +6230,14 @@ class _IndustrialWorkbenchUI(QMainWindow):
     def _start_tool_agent_task(self, project, text):
         """Start a safe tool turn without disturbing the generation workflow."""
         if not self._ensure_api_configured():
-            self.statusBar().showMessage("需要先完成 API 配置。", 4000)
+            self.statusBar().showMessage(tr('需要先完成 API 配置。'), 4000)
             return False
         history_before = self._api_history(project)
         try:
             context = self._tool_agent_context(project)
         except Exception as error:
             self.statusBar().showMessage(
-                f"读取当前程序失败："
-                f"{naturalize_display_text(error)}",
+                tr('读取当前程序失败：{v0}', v0=naturalize_display_text(error)),
                 5000,
             )
             return False
@@ -6283,9 +6255,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "phase": "tool_agent",
             "request": text,
         }
-        self._set_busy(True, "正在执行工程工具")
+        self._set_busy(True, tr('正在执行工程工具'))
         self.activity_panel.reset()
-        self.activity_panel.set_status("正在准备工程工具")
+        self.activity_panel.set_status(tr('正在准备工程工具'))
         thread = ToolAgentThread(
             task_id,
             text,
@@ -6317,7 +6289,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         project_id = task["project_id"]
         payload = dict(payload or {})
         content = naturalize_display_text(
-            payload.get("content") or "工具任务已完成。"
+            payload.get("content") or tr('工具任务已完成。')
         )
         self.store.add_message(
             project_id,
@@ -6335,8 +6307,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
             if isinstance(action, dict)
         ]
         self.active_task = None
-        self._set_busy(False, "工具任务完成")
-        self.activity_panel.set_status("工具任务完成")
+        self._set_busy(False, tr('工具任务完成'))
+        self.activity_panel.set_status(tr('工具任务完成'))
         self._refresh_projects(self.current_project_id)
         if self.current_project_id == project_id:
             self._render_conversation(self.store.get_project(project_id))
@@ -6362,7 +6334,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             metadata={"source": "tool_agent"},
         )
         self.active_task = None
-        self._set_busy(False, "工具任务失败")
+        self._set_busy(False, tr('工具任务失败'))
         self.activity_panel.show_error(naturalize_display_text(error))
         if self.current_project_id == project_id:
             self._render_conversation(self.store.get_project(project_id))
@@ -6382,8 +6354,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         ):
             QMessageBox.warning(
                 self,
-                "候选补丁已过期",
-                "候选补丁绑定的项目或基础版本已经变化，请重新提出修改要求。",
+                tr('候选补丁已过期'),
+                tr('候选补丁绑定的项目或基础版本已经变化，请重新提出修改要求。'),
             )
             return
 
@@ -6394,38 +6366,35 @@ class _IndustrialWorkbenchUI(QMainWindow):
             if not isinstance(change, dict):
                 continue
             marker = str(change.get("marker") or "~")
-            network = str(change.get("network") or "未知网络")
-            comment = naturalize_display_text(change.get("comment") or "未命名网络")
+            network = str(change.get("network") or tr('未知网络'))
+            comment = naturalize_display_text(change.get("comment") or tr('未命名网络'))
             instruction_count = int(change.get("instruction_count") or 0)
             lines.append(
-                f"{marker} {network}  {comment}（{instruction_count} 条指令）"
+                tr('{v0} {v1}  {v2}（{v3} 条指令）', v0=marker, v1=network, v2=comment, v3=instruction_count)
             )
         if len(changes) > len(lines):
-            lines.append(f"…另有 {len(changes) - len(lines)} 项变更")
+            lines.append(tr('…另有 {v0} 项变更', v0=len(changes) - len(lines)))
         if diff.get("device_comments_changed"):
-            lines.append("~ 软元件注释")
+            lines.append(tr('~ 软元件注释'))
         if not lines:
-            lines.append("未检测到 Network 或注释差异")
+            lines.append(tr('未检测到 Network 或注释差异'))
 
         counts = (action.get("diagnostics") or {}).get("counts") or {}
         answer = QMessageBox.question(
             self,
-            "查看并接受候选补丁",
+            tr('查看并接受候选补丁'),
             (
-                f"项目：{naturalize_display_text(action.get('project_name') or requested_project)}\n"
-                f"基础版本：{version_display_name(base_version_id)}\n"
-                f"目标修订：{action.get('target_revision')}\n\n"
-                "差异：\n"
+                tr('项目：{v0}\n基础版本：{v1}\n目标修订：{v2}\n\n差异：\n', v0=naturalize_display_text(action.get('project_name') or requested_project), v1=version_display_name(base_version_id), v2=action.get('target_revision'))
                 + "\n".join(lines)
-                + "\n\n确定性校验："
-                + f"错误 {int(counts.get('error', 0) or 0)}，"
-                + f"警告 {int(counts.get('warning', 0) or 0)}，"
-                + f"提示 {int(counts.get('info', 0) or 0)}。\n\n"
-                + "接受后只创建本地新版本，不会自动同步 GX Works2。是否接受？"
+                + tr('\n\n确定性校验：')
+                + tr('错误 {v0}，', v0=int(counts.get('error', 0) or 0))
+                + tr('警告 {v0}，', v0=int(counts.get('warning', 0) or 0))
+                + tr('提示 {v0}。\n\n', v0=int(counts.get('info', 0) or 0))
+                + tr('接受后只创建本地新版本，不会自动同步 GX Works2。是否接受？')
             ),
         )
         if answer != QMessageBox.StandardButton.Yes:
-            self.statusBar().showMessage("已丢弃候选补丁，当前版本未改变。", 5000)
+            self.statusBar().showMessage(tr('已丢弃候选补丁，当前版本未改变。'), 5000)
             return
 
         try:
@@ -6435,7 +6404,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         except Exception as error:
             QMessageBox.critical(
                 self,
-                "候选补丁未接受",
+                tr('候选补丁未接受'),
                 naturalize_display_text(error),
             )
             return
@@ -6444,7 +6413,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.store.add_message(
             requested_project,
             "assistant",
-            f"已接受候选补丁并创建本地{version_display_name(version_id)}；尚未同步 GX Works2。",
+            tr('已接受候选补丁并创建本地{v0}；尚未同步 GX Works2。', v0=version_display_name(version_id)),
             kind="system",
             metadata={
                 "source": "candidate_patch_confirmation",
@@ -6461,7 +6430,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self._select_version(version_id)
             self._render_conversation(self.store.get_project(requested_project))
         self.statusBar().showMessage(
-            f"已创建本地{version_display_name(version_id)}，未同步 GX Works2。",
+            tr('已创建本地{v0}，未同步 GX Works2。', v0=version_display_name(version_id)),
             6000,
         )
 
@@ -6479,24 +6448,19 @@ class _IndustrialWorkbenchUI(QMainWindow):
         ):
             QMessageBox.warning(
                 self,
-                "无法执行导入",
-                "AI 请求所绑定的项目或版本已经发生变化，请重新发出导入请求。",
+                tr('无法执行导入'),
+                tr('AI 请求所绑定的项目或版本已经发生变化，请重新发出导入请求。'),
             )
             return
         answer = QMessageBox.question(
             self,
-            "确认同步 GX Works2",
+            tr('确认同步 GX Works2'),
             (
-                f"项目："
-                f"{naturalize_display_text(action.get('project_name') or requested_project)}\n"
-                f"版本：{version_display_name(requested_version)}\n"
-                f"程序：{action.get('program_name') or 'MAIN'}\n\n"
-                "将先读取并比较GX Works2当前程序与注释：只有项目侧变化时才写入，"
-                "GX侧变化会回读为新版本，双方变化时会要求你选择。是否继续？"
+                tr('项目：{v0}\n版本：{v1}\n程序：{v2}\n\n将先读取并比较GX Works2当前程序与注释：只有项目侧变化时才写入，GX侧变化会回读为新版本，双方变化时会要求你选择。是否继续？', v0=naturalize_display_text(action.get('project_name') or requested_project), v1=version_display_name(requested_version), v2=action.get('program_name') or 'MAIN')
             ),
         )
         if answer != QMessageBox.StandardButton.Yes:
-            self.statusBar().showMessage("已取消 AI 请求的 GX Works2 导入。", 4000)
+            self.statusBar().showMessage(tr('已取消 AI 请求的 GX Works2 导入。'), 4000)
             return
         self._sync_current_version_with_gxworks2()
 
@@ -6533,7 +6497,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             history.append(
                 {
                     "role": "assistant",
-                    "content": "同一版本的既往诊断："
+                    "content": tr('同一版本的既往诊断：')
                     + json.dumps(compact, ensure_ascii=False),
                 }
             )
@@ -6555,11 +6519,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
         default_index = models.index(stored_model) if stored_model in models else 0
         selected, accepted = QInputDialog.getItem(
             self,
-            "确认旧版本 PLC 型号",
+            tr('确认旧版本 PLC 型号'),
             (
-                f"{version.get('id', '旧版本')} 缺少完整规格快照。"
-                f"\n请确认本次{purpose}使用的 PLC 型号；只会读取该版本 JSON，"
-                "不会套用项目最新规格。"
+                tr('{v0} 缺少完整规格快照。\n请确认本次{v1}使用的 PLC 型号；只会读取该版本 JSON，不会套用项目最新规格。', v0=version.get('id', tr('旧版本')), v1=purpose)
             ),
             models,
             default_index,
@@ -6580,14 +6542,14 @@ class _IndustrialWorkbenchUI(QMainWindow):
     def _start_inspection_task(self, project, workflow_mode, text):
         selected = self._version_with_json(project, self.current_version_id)
         if not selected:
-            self.statusBar().showMessage("请先选择一个可读取的生成版本。", 4000)
+            self.statusBar().showMessage(tr('请先选择一个可读取的生成版本。'), 4000)
             return False
         version, current_json = selected
         if version.get("target_mode") != "ladder" or not isinstance(
             current_json, dict
         ):
             self.statusBar().showMessage(
-                "首期仅支持梯形图版本评审与故障调试。", 5000
+                tr('首期仅支持梯形图版本评审与故障调试。'), 5000
             )
             return False
         if workflow_mode == "debug":
@@ -6604,7 +6566,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 )
             if not text:
                 self.statusBar().showMessage(
-                    "当前版本没有失败仿真记录，请先运行测试或描述故障现象。",
+                    tr('当前版本没有失败仿真记录，请先运行测试或描述故障现象。'),
                     5000,
                 )
                 return False
@@ -6620,16 +6582,16 @@ class _IndustrialWorkbenchUI(QMainWindow):
             display_text = text
         else:
             request = {"review_focus": text}
-            display_text = text or "执行完整版本评审"
+            display_text = text or tr('执行完整版本评审')
 
         confirmed_spec = self._version_confirmed_spec(version)
         plc_model = self._resolve_version_plc_model(
             project,
             version,
-            "评审" if report_type == "program_review" else "调试",
+            tr('评审') if report_type == "program_review" else tr('调试'),
         )
         if not plc_model:
-            self.statusBar().showMessage("已取消：未确认旧版本 PLC 型号。", 4000)
+            self.statusBar().showMessage(tr('已取消：未确认旧版本 PLC 型号。'), 4000)
             return False
         self.store.add_message(project["id"], "user", display_text)
         self.composer_edit.clear()
@@ -6649,10 +6611,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
         }
         self._set_busy(
             True,
-            "正在版本评审" if report_type == "program_review" else "正在分析故障",
+            tr('正在版本评审') if report_type == "program_review" else tr('正在分析故障'),
         )
         self.activity_panel.reset()
-        self.activity_panel.set_status("正在执行本地规则")
+        self.activity_panel.set_status(tr('正在执行本地规则'))
         thread = InspectionThread(
             task_id,
             report_type,
@@ -6685,12 +6647,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     def _send_requirement(self):
         if self.active_task:
-            self.statusBar().showMessage("当前已有任务运行，请等待完成。", 4000)
+            self.statusBar().showMessage(tr('当前已有任务运行，请等待完成。'), 4000)
             return
         text = self.composer_edit.toPlainText().strip()
         has_images = bool(self._composer_image_paths)
         if not self.current_project_id:
-            self.statusBar().showMessage("请先选择项目。", 3000)
+            self.statusBar().showMessage(tr('请先选择项目。'), 3000)
             return
         project = self.store.get_project(self.current_project_id)
         workflow_mode = project.get("workflow_mode", "generate")
@@ -6698,10 +6660,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self._start_inspection_task(project, workflow_mode, text)
             return
         if not text and not has_images:
-            self.statusBar().showMessage("请先输入控制需求或添加图片。", 3000)
+            self.statusBar().showMessage(tr('请先输入控制需求或添加图片。'), 3000)
             return
         if not text:
-            text = "请结合所附图片分析并生成控制方案。"
+            text = tr('请结合所附图片分析并生成控制方案。')
         if has_images and not self._ensure_image_capable_model():
             return
         from plc_agent import should_route_to_tool_agent
@@ -6721,7 +6683,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self._start_tool_agent_task(project, text)
             return
         if not self._ensure_api_configured():
-            self.statusBar().showMessage("需要先完成 API 配置。", 4000)
+            self.statusBar().showMessage(tr('需要先完成 API 配置。'), 4000)
             return
         try:
             image_records, model_images = self._persist_composer_images(
@@ -6730,7 +6692,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         except Exception as error:
             QMessageBox.warning(
                 self,
-                "图片未添加",
+                tr('图片未添加'),
                 naturalize_display_text(error),
             )
             return
@@ -6760,8 +6722,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 project["id"],
                 {
                     "request": (
-                        "请严格按当前已确认规格重新生成完整程序；不重新分析需求，"
-                        "不改变已选方案、参数、I/O 或硬件接口。"
+                        tr('请严格按当前已确认规格重新生成完整程序；不重新分析需求，不改变已选方案、参数、I/O 或硬件接口。')
                     ),
                     "analysis": {},
                     "draft": copy.deepcopy(confirmed_spec),
@@ -6777,7 +6738,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             text,
             metadata={"image_attachments": image_records},
         )
-        if project["name"] == "新项目":
+        if project["name"] == tr('新项目'):
             name = text.replace("\n", " ")[:18]
             self.store.update_project_settings(project["id"], name=name)
         self.composer_edit.clear()
@@ -6798,12 +6759,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "image_attachments": image_records,
             "model_images": model_images,
         }
-        self._set_busy(True, "正在分析需求")
+        self._set_busy(True, tr('正在分析需求'))
         self.activity_panel.reset()
-        self.activity_panel.set_status("分析需求")
+        self.activity_panel.set_status(tr('分析需求'))
         thread = AnalysisThread(
             task_id,
-            f"目标 PLC 型号：{project.get('plc_model', 'FX3U')}\n{text}",
+            tr('目标 PLC 型号：{v0}\n{v1}', v0=project.get('plc_model', 'FX3U'), v1=text),
             conversation_history=history_before,
             confirmed_context=(
                 {"_context_phase": "analysis_baseline", **confirmed_spec}
@@ -6822,10 +6783,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     def _start_evidence_debug_plan(self, project, version, run_record, text=""):
         if not self._ensure_api_configured():
-            self.statusBar().showMessage("证据化调试需要先完成 API 配置。", 5000)
+            self.statusBar().showMessage(tr('证据化调试需要先完成 API 配置。'), 5000)
             return False
         run_id = str(run_record.get("run_id") or "")
-        display_text = text or "分析最近一次失败的仿真测试"
+        display_text = text or tr('分析最近一次失败的仿真测试')
         self.store.add_message(project["id"], "user", display_text)
         self.composer_edit.clear()
         task_id = f"debug-plan-{uuid.uuid4().hex[:10]}"
@@ -6836,9 +6797,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "base_version_id": version["id"],
             "run_id": run_id,
         }
-        self._set_busy(True, "正在分析仿真失败证据")
+        self._set_busy(True, tr('正在分析仿真失败证据'))
         self.activity_panel.reset()
-        self.activity_panel.set_status("正在整理失败轨迹和反向依赖")
+        self.activity_panel.set_status(tr('正在整理失败轨迹和反向依赖'))
         thread = EvidenceDebugPlanThread(
             task_id,
             self.store,
@@ -6862,36 +6823,27 @@ class _IndustrialWorkbenchUI(QMainWindow):
         diagnosis = plan.get("diagnosis") or {}
         affected_networks = diagnosis.get("affected_networks") or []
         affected = "、".join(
-            naturalize_identifier(item, kind="程序段", index=index)
+            naturalize_identifier(item, kind=tr('程序段'), index=index)
             for index, item in enumerate(affected_networks, start=1)
-        ) or "暂未定位到具体程序段"
+        ) or tr('暂未定位到具体程序段')
         operations = plan.get("patch", {}).get("operations") or []
         evidence = plan.get("evidence") or {}
         answer = QMessageBox.question(
             self,
-            "确认执行仿真修复闭环",
+            tr('确认执行仿真修复闭环'),
             (
-                f"基础版本：{version_display_name(plan.get('base_version_id'))}\n"
-                "失败来源：最近一次仿真测试\n"
-                f"根因判断：{naturalize_display_text(diagnosis.get('root_cause', ''))}\n"
-                f"置信度：{float(diagnosis.get('confidence') or 0):.0%}\n"
-                f"修改网络：{affected}\n"
-                f"局部操作数：{len(operations)}\n"
-                f"证据条目：{len(evidence.get('failures') or [])} 个失败，"
-                f"{len(evidence.get('device_trace') or [])} 条轨迹\n\n"
-                "确认后将创建候选版本、导入 GX Works2 并运行完整回归。"
-                "只有全部通过才会激活；失败将自动恢复原版本。"
+                tr('基础版本：{v0}\n失败来源：最近一次仿真测试\n根因判断：{v1}\n置信度：{v2:.0%}\n修改网络：{v3}\n局部操作数：{v4}\n证据条目：{v5} 个失败，{v6} 条轨迹\n\n确认后将创建候选版本、导入 GX Works2 并运行完整回归。只有全部通过才会激活；失败将自动恢复原版本。', v0=version_display_name(plan.get('base_version_id')), v1=naturalize_display_text(diagnosis.get('root_cause', '')), v2=float(diagnosis.get('confidence') or 0), v3=affected, v4=len(operations), v5=len(evidence.get('failures') or []), v6=len(evidence.get('device_trace') or []))
             ),
         )
         if answer != QMessageBox.StandardButton.Yes:
             project_id = task["project_id"]
             self.active_task = None
-            self._set_busy(False, "已取消执行，调试方案已保留")
-            self.activity_panel.set_status("调试方案已保留，未修改程序")
+            self._set_busy(False, tr('已取消执行，调试方案已保留'))
+            self.activity_panel.set_status(tr('调试方案已保留，未修改程序'))
             self.store.add_message(
                 project_id,
                 "assistant",
-                "已生成证据化调试方案，但未获确认执行；程序与 GX Works2 均未修改。",
+                tr('已生成证据化调试方案，但未获确认执行；程序与 GX Works2 均未修改。'),
                 kind="system",
                 metadata={"debug_plan_id": plan.get("plan_id")},
             )
@@ -6899,8 +6851,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return
         self.active_task["phase"] = "debug_execute"
         self.active_task["plan_id"] = plan.get("plan_id")
-        self._set_busy(True, "正在执行调试闭环")
-        self.activity_panel.set_status("正在校验候选补丁")
+        self._set_busy(True, tr('正在执行调试闭环'))
+        self.activity_panel.set_status(tr('正在校验候选补丁'))
         thread = EvidenceDebugExecuteThread(task_id, self.store, plan)
         self._retain_worker_thread("_evidence_debug_execute_thread", thread)
         thread.completed.connect(self._evidence_debug_execute_done)
@@ -6914,13 +6866,13 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return
         project_id = task["project_id"]
         self.active_task = None
-        self._set_busy(False, "证据化调试方案生成失败")
+        self._set_busy(False, tr('证据化调试方案生成失败'))
         display_error = naturalize_display_text(error)
         self.activity_panel.show_error(display_error)
         self.store.add_message(
             project_id,
             "assistant",
-            f"失败仿真未生成可执行补丁：{display_error}",
+            tr('失败仿真未生成可执行补丁：{v0}', v0=display_error),
             kind="system",
             metadata={"workflow_mode": "debug"},
         )
@@ -6934,14 +6886,13 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.active_task = None
         status = str(attempt.get("status") or "error")
         passed = status == "passed"
-        self._set_busy(False, "调试回归通过" if passed else "调试回归未通过")
+        self._set_busy(False, tr('调试回归通过') if passed else tr('调试回归未通过'))
         if passed:
-            self.activity_panel.set_status("补丁已通过完整回归")
+            self.activity_panel.set_status(tr('补丁已通过完整回归'))
             QMessageBox.information(
                 self,
-                "调试闭环完成",
-                f"{naturalize_display_text(attempt.get('message'))}\n"
-                f"新版本：{version_display_name(attempt.get('candidate_version_id'))}",
+                tr('调试闭环完成'),
+                tr('{v0}\n新版本：{v1}', v0=naturalize_display_text(attempt.get('message')), v1=version_display_name(attempt.get('candidate_version_id'))),
             )
         else:
             self.activity_panel.show_error(
@@ -6949,18 +6900,15 @@ class _IndustrialWorkbenchUI(QMainWindow):
             )
             QMessageBox.warning(
                 self,
-                "调试闭环未通过",
+                tr('调试闭环未通过'),
                 (
-                    f"{naturalize_display_text(attempt.get('message'))}\n"
-                    "原版本："
-                    f"{version_display_name(attempt.get('base_version_id') or task.get('base_version_id'))}\n"
-                    f"回滚：{'已恢复' if (attempt.get('rollback') or {}).get('restored') else '无需恢复或恢复失败'}"
+                    tr('{v0}\n原版本：{v1}\n回滚：{v2}', v0=naturalize_display_text(attempt.get('message')), v1=version_display_name(attempt.get('base_version_id') or task.get('base_version_id')), v2=tr('已恢复') if (attempt.get('rollback') or {}).get('restored') else tr('无需恢复或恢复失败'))
                 ),
             )
         self.store.add_message(
             project_id,
             "assistant",
-            naturalize_display_text(attempt.get("message") or "调试闭环已结束"),
+            naturalize_display_text(attempt.get("message") or tr('调试闭环已结束')),
             kind="system",
             metadata={
                 "workflow_mode": "debug_loop",
@@ -6980,10 +6928,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return
         project_id = task["project_id"]
         self.active_task = None
-        self._set_busy(False, "调试闭环执行失败")
+        self._set_busy(False, tr('调试闭环执行失败'))
         display_error = naturalize_display_text(error)
         self.activity_panel.show_error(display_error)
-        QMessageBox.warning(self, "调试闭环执行失败", display_error)
+        QMessageBox.warning(self, tr('调试闭环执行失败'), display_error)
         self._refresh_projects(project_id)
         self._render_conversation(self.store.get_project(project_id))
 
@@ -7012,12 +6960,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.store.add_message(
             project_id,
             "assistant",
-            "需求分析完成，请检查下方确认卡后再生成。",
+            tr('需求分析完成，请检查下方确认卡后再生成。'),
             kind="system",
         )
         self.active_task = None
-        self._set_busy(False, "等待确认")
-        self.activity_panel.set_status("等待确认")
+        self._set_busy(False, tr('等待确认'))
+        self.activity_panel.set_status(tr('等待确认'))
         if self.current_project_id == project_id:
             self._render_conversation(self.store.get_project(project_id))
         self._refresh_projects(self.current_project_id)
@@ -7034,30 +6982,29 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.store.add_message(
             project_id,
             "assistant",
-            f"需求分析失败：{naturalize_display_text(error)}\n"
-            "请检查 API 配置后重试，或修改需求描述。",
+            tr('需求分析失败：{v0}\n请检查 API 配置后重试，或修改需求描述。', v0=naturalize_display_text(error)),
             kind="system",
         )
         self.active_task = None
-        self._set_busy(False, "分析失败")
+        self._set_busy(False, tr('分析失败'))
         self.activity_panel.show_error(naturalize_display_text(error))
         if self.current_project_id == project_id:
             self._render_conversation(self.store.get_project(project_id))
 
     def _retry_inspection_ai(self, report_id):
         if self.active_task or not self.current_project_id:
-            self.statusBar().showMessage("当前已有任务运行。", 3000)
+            self.statusBar().showMessage(tr('当前已有任务运行。'), 3000)
             return
         project = self.store.get_project(self.current_project_id)
         report = self.store.get_report(self.current_project_id, report_id)
         if not project or not report:
-            self.statusBar().showMessage("报告不存在或已被移除。", 4000)
+            self.statusBar().showMessage(tr('报告不存在或已被移除。'), 4000)
             return
         selected = self._version_with_json(
             project, report.get("base_version_id")
         )
         if not selected or not isinstance(selected[1], dict):
-            self.statusBar().showMessage("报告绑定版本无法读取。", 4000)
+            self.statusBar().showMessage(tr('报告绑定版本无法读取。'), 4000)
             return
         version, base_json = selected
         from inspection_engine import hash_ladder_json
@@ -7066,12 +7013,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
             hash_ladder_json(base_json) != report.get("base_json_hash")
         ):
             self.statusBar().showMessage(
-                "报告绑定的 JSON 哈希不再匹配，不能重试 AI。", 5000
+                tr('报告绑定的 JSON 哈希不再匹配，不能重试 AI。'), 5000
             )
             return
         if not self._ensure_api_configured():
             self.statusBar().showMessage(
-                "未配置 API；本地报告保持不变。", 4000
+                tr('未配置 API；本地报告保持不变。'), 4000
             )
             return
         task_id = f"inspection-retry-{uuid.uuid4().hex[:10]}"
@@ -7094,9 +7041,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "report_id": report_id,
             "reuse_report": True,
         }
-        self._set_busy(True, "正在重试 AI 深查")
+        self._set_busy(True, tr('正在重试 AI 深查'))
         self.activity_panel.reset()
-        self.activity_panel.set_status("正在重新执行本地规则并重试 AI")
+        self.activity_panel.set_status(tr('正在重新执行本地规则并重试 AI'))
         thread = InspectionThread(
             task_id,
             report_type,
@@ -7148,27 +7095,27 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 )
             except Exception as error:
                 self._inspection_failed(
-                    task_id, f"更新本地报告失败：{error}"
+                    task_id, tr('更新本地报告失败：{v0}', v0=error)
                 )
                 return
             if self.current_project_id == task["project_id"]:
                 self._render_conversation(
                     self.store.get_project(task["project_id"])
                 )
-            self.activity_panel.set_status("本地结果已刷新，正在重试 AI")
+            self.activity_panel.set_status(tr('本地结果已刷新，正在重试 AI'))
             return
         try:
             created = self.store.create_report(task["project_id"], report)
             if isinstance(created, dict):
                 report_id = created.get("report_id", report_id)
         except Exception as error:
-            self._inspection_failed(task_id, f"保存本地报告失败：{error}")
+            self._inspection_failed(task_id, tr('保存本地报告失败：{v0}', v0=error))
             return
         task["report_id"] = report_id
         self.store.add_message(
             task["project_id"],
             "assistant",
-            report.get("summary") or "本地检查完成，正在进行 AI 深查。",
+            report.get("summary") or tr('本地检查完成，正在进行 AI 深查。'),
             kind="inspection_report",
             metadata={
                 "report_id": report_id,
@@ -7180,7 +7127,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self._render_conversation(
                 self.store.get_project(task["project_id"])
             )
-        self.activity_panel.set_status("本地结果已生成，正在等待 AI")
+        self.activity_panel.set_status(tr('本地结果已生成，正在等待 AI'))
 
     def _inspection_done(self, task_id, report):
         task = self.active_task
@@ -7204,25 +7151,25 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 report["multi_agent"]["run_id"] = saved_run["run_id"]
             self.store.update_report(task["project_id"], report_id, report)
         except Exception as error:
-            self._inspection_failed(task_id, f"更新报告失败：{error}")
+            self._inspection_failed(task_id, tr('更新报告失败：{v0}', v0=error))
             return
         execution_status = report.get("status", "complete")
         if execution_status == "complete":
-            status = "版本评审完成" if task["report_type"] == "program_review" else "故障分析完成"
+            status = tr('版本评审完成') if task["report_type"] == "program_review" else tr('故障分析完成')
         elif execution_status == "local_only":
             status = (
-                "仅本地版本评审完成"
+                tr('仅本地版本评审完成')
                 if task["report_type"] == "program_review"
-                else "仅本地故障初筛完成"
+                else tr('仅本地故障初筛完成')
             )
         elif execution_status == "partial":
-            status = "本地检查完成，AI 深查未完成"
+            status = tr('本地检查完成，AI 深查未完成')
         elif execution_status == "needs_input":
-            status = "需要补充现场信息"
+            status = tr('需要补充现场信息')
         elif execution_status == "unsupported":
-            status = "当前版本暂不支持"
+            status = tr('当前版本暂不支持')
         else:
-            status = "检查失败"
+            status = tr('检查失败')
         project_id = task["project_id"]
         self.active_task = None
         self._set_busy(False, status)
@@ -7249,11 +7196,11 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self.store.add_message(
                 project_id,
                 "assistant",
-                f"评审/调试失败：{naturalize_display_text(error)}",
+                tr('评审/调试失败：{v0}', v0=naturalize_display_text(error)),
                 kind="system",
             )
         self.active_task = None
-        self._set_busy(False, "检查失败")
+        self._set_busy(False, tr('检查失败'))
         self.activity_panel.show_error(naturalize_display_text(error))
         if self.current_project_id == project_id:
             self._render_conversation(self.store.get_project(project_id))
@@ -7275,7 +7222,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.store.add_message(
             project_id,
             "assistant",
-            report.get("summary", "调试报告已生成"),
+            report.get("summary", tr('调试报告已生成')),
             kind="debug_report",
             metadata={
                 "workflow_mode": "debug",
@@ -7285,8 +7232,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         )
         self.active_task = None
         self._debug_thread = None
-        self._set_busy(False, "调试完成")
-        self.activity_panel.set_status("调试完成")
+        self._set_busy(False, tr('调试完成'))
+        self.activity_panel.set_status(tr('调试完成'))
         self._refresh_projects(self.current_project_id)
         if self.current_project_id == project_id:
             self._render_conversation(self.store.get_project(project_id))
@@ -7299,48 +7246,48 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.store.add_message(
             project_id,
             "assistant",
-            f"调试失败：{naturalize_display_text(error)}",
+            tr('调试失败：{v0}', v0=naturalize_display_text(error)),
             kind="system",
             metadata={"workflow_mode": "debug"},
         )
         self.active_task = None
         self._debug_thread = None
-        self._set_busy(False, "调试失败")
+        self._set_busy(False, tr('调试失败'))
         self.activity_panel.show_error(naturalize_display_text(error))
         if self.current_project_id == project_id:
             self._render_conversation(self.store.get_project(project_id))
 
     def _copy_debug_fix_to_input(self, text):
         if not text:
-            self.statusBar().showMessage("该调试报告没有生成修复要求。", 3000)
+            self.statusBar().showMessage(tr('该调试报告没有生成修复要求。'), 3000)
             return
         self.composer_edit.setPlainText(str(text).strip())
         self.composer_edit.setFocus()
-        self.statusBar().showMessage("修复要求已放入输入框。", 3000)
+        self.statusBar().showMessage(tr('修复要求已放入输入框。'), 3000)
 
     def _start_debug_fix(self, project_id, report):
         if self.active_task:
-            self.statusBar().showMessage("当前已有任务运行。", 3000)
+            self.statusBar().showMessage(tr('当前已有任务运行。'), 3000)
             return
         if not self._ensure_api_configured():
-            self.statusBar().showMessage("需要先完成 API 配置。", 4000)
+            self.statusBar().showMessage(tr('需要先完成 API 配置。'), 4000)
             return
         project = self.store.get_project(project_id)
         if not project:
             return
         latest_ladder = self._latest_ladder_version(project)
         if not latest_ladder:
-            self.statusBar().showMessage("当前没有可修复的梯形图版本。", 4000)
+            self.statusBar().showMessage(tr('当前没有可修复的梯形图版本。'), 4000)
             return
         version, previous_json = latest_ladder
         if report.get("base_version_id") != version.get("id"):
             self.statusBar().showMessage(
-                "该调试报告基于旧版本，请重新调试当前版本。", 5000
+                tr('该调试报告基于旧版本，请重新调试当前版本。'), 5000
             )
             return
         fix_instruction = str(report.get("fix_instruction", "")).strip()
         if not fix_instruction:
-            self.statusBar().showMessage("该调试报告没有修复要求。", 3000)
+            self.statusBar().showMessage(tr('该调试报告没有修复要求。'), 3000)
             return
         confirmed_spec = canonicalize_confirmed_spec(
             project.get("confirmed_spec")
@@ -7360,24 +7307,21 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "project_id": project_id,
             "version_id": version_id,
             "phase": "compile",
-            "summary": f"调试修复：{report.get('summary', '')}",
+            "summary": tr('调试修复：{v0}', v0=report.get('summary', '')),
         }
         request = (
-            "请基于当前版本 JSON 生成调试修复版本。只修改调试报告指出的问题，"
-            "不要重写无关逻辑。\n\n"
-            f"调试摘要：{report.get('summary', '')}\n"
-            f"修复要求：{fix_instruction}"
+            tr('请基于当前版本 JSON 生成调试修复版本。只修改调试报告指出的问题，不要重写无关逻辑。\n\n调试摘要：{v0}\n修复要求：{v1}', v0=report.get('summary', ''), v1=fix_instruction)
         )
         self.store.add_message(
             project_id,
             "assistant",
-            f"已根据调试报告开始生成{version_display_name(version_id)}。",
+            tr('已根据调试报告开始生成{v0}。', v0=version_display_name(version_id)),
             kind="system",
             metadata={"workflow_mode": "debug_fix", "version_id": version_id},
         )
-        self._set_busy(True, "正在生成调试修复版本")
+        self._set_busy(True, tr('正在生成调试修复版本'))
         self.activity_panel.reset()
-        self.activity_panel.set_status("准备生成调试修复版本")
+        self.activity_panel.set_status(tr('准备生成调试修复版本'))
         thread = CompilerThread(
             task_id,
             request,
@@ -7413,7 +7357,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         project = self.store.get_project(self.current_project_id)
         selected = self._version_with_json(project, version_id)
         if not selected or not isinstance(selected[1], dict):
-            self.statusBar().showMessage("报告绑定版本无法读取。", 4000)
+            self.statusBar().showMessage(tr('报告绑定版本无法读取。'), 4000)
             return
         self._select_version(version_id)
         version, ladder = selected
@@ -7470,24 +7414,23 @@ class _IndustrialWorkbenchUI(QMainWindow):
             )
             self.source_view.find(f'"rung_id": {rung_id}')
             self.statusBar().showMessage(
-                f"已定位{version_display_name(version_id)}的梯级 "
-                f"{display_number if display_number is not None else rung_id}",
+                tr('已定位{v0}的梯级 {v1}', v0=version_display_name(version_id), v1=display_number if display_number is not None else rung_id),
                 5000,
             )
         except Exception as error:
             self.statusBar().showMessage(
-                f"定位失败：{naturalize_display_text(error)}", 4000
+                tr('定位失败：{v0}', v0=naturalize_display_text(error)), 4000
             )
 
     def _start_inspection_repair(self, report_id, selected_finding_ids):
         if self.active_task or not self.current_project_id:
-            self.statusBar().showMessage("当前已有任务运行。", 3000)
+            self.statusBar().showMessage(tr('当前已有任务运行。'), 3000)
             return
         project_id = self.current_project_id
         project = self.store.get_project(project_id)
         report = self.store.get_report(project_id, report_id)
         if not report:
-            self.statusBar().showMessage("诊断报告不存在。", 4000)
+            self.statusBar().showMessage(tr('诊断报告不存在。'), 4000)
             return
         selected_ids = list(dict.fromkeys(selected_finding_ids or []))
         findings = [
@@ -7499,12 +7442,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
             and str(item.get("fix_instruction", "")).strip()
         ]
         if not findings:
-            self.statusBar().showMessage("请至少勾选一个可修复问题。", 4000)
+            self.statusBar().showMessage(tr('请至少勾选一个可修复问题。'), 4000)
             return
         base_version_id = report.get("base_version_id")
         selected = self._version_with_json(project, base_version_id)
         if not selected or not isinstance(selected[1], dict):
-            self.statusBar().showMessage("报告绑定版本无法读取。", 4000)
+            self.statusBar().showMessage(tr('报告绑定版本无法读取。'), 4000)
             return
         version, previous_json = selected
         from inspection_engine import hash_ladder_json
@@ -7513,7 +7456,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             hash_ladder_json(previous_json) != report.get("base_json_hash")
         ):
             self.statusBar().showMessage(
-                "版本内容已变化，请重新评审或调试后再修复。", 5000
+                tr('版本内容已变化，请重新评审或调试后再修复。'), 5000
             )
             return
         allowed_rungs = set()
@@ -7552,7 +7495,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                     allowed_paths.add(path)
         if not allowed_rungs:
             self.statusBar().showMessage(
-                "所选问题缺少可验证的梯级证据，不能自动修复。", 5000
+                tr('所选问题缺少可验证的梯级证据，不能自动修复。'), 5000
             )
             return
         summary_lines = [
@@ -7562,31 +7505,30 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 or item.get("message")
                 or naturalize_identifier(
                     item.get("finding_id"),
-                    kind="问题",
+                    kind=tr('问题'),
                     index=index,
                 )
             )
             for index, item in enumerate(findings, start=1)
         ]
         boundary = (
-            "\n允许影响的梯级："
+            tr('\n允许影响的梯级：')
             + ", ".join(map(str, sorted(allowed_rungs)))
-            + "\n允许影响的地址："
-            + (", ".join(sorted(allowed_addresses)) or "无附加地址")
-            + "\n精确定位："
+            + tr('\n允许影响的地址：')
+            + (", ".join(sorted(allowed_addresses)) or tr('无附加地址'))
+            + tr('\n精确定位：')
             + (
-                f"已绑定 {len(allowed_paths)} 处程序位置"
+                tr('已绑定 {v0} 处程序位置', v0=len(allowed_paths))
                 if allowed_paths
-                else "仅限上述梯级"
+                else tr('仅限上述梯级')
             )
-            + "\n边界：必须返回增量 JSON，不得完整重写，也不得修改未勾选问题。"
+            + tr('\n边界：必须返回增量 JSON，不得完整重写，也不得修改未勾选问题。')
         )
         answer = QMessageBox.question(
             self,
-            "确认生成修复版本",
+            tr('确认生成修复版本'),
             (
-                f"基础版本：{version_display_name(base_version_id)}\n"
-                f"将修复 {len(findings)} 项并创建新版本，不覆盖原版本：\n"
+                tr('基础版本：{v0}\n将修复 {v1} 项并创建新版本，不覆盖原版本：\n', v0=version_display_name(base_version_id), v1=len(findings))
                 + "\n".join(summary_lines)
                 + boundary
             ),
@@ -7595,7 +7537,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return
         if not self._ensure_api_configured():
             self.statusBar().showMessage(
-                "生成修复版本需要先配置 API；本地报告仍可查看。", 5000
+                tr('生成修复版本需要先配置 API；本地报告仍可查看。'), 5000
             )
             return
 
@@ -7624,10 +7566,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "allowed_addresses": sorted(allowed_addresses),
         }
         request = (
-            f"目标 PLC 型号：{plc_model}\n"
-            "请根据以下已确认问题生成严格增量修复。只返回 mode=partial 的"
-            "梯形图 JSON；不得改动未列入 allowed_rung_ids 的梯级，也不得"
-            "顺带修复未勾选的问题。\n"
+            tr('目标 PLC 型号：{v0}\n请根据以下已确认问题生成严格增量修复。只返回 mode=partial 的梯形图 JSON；不得改动未列入 allowed_rung_ids 的梯级，也不得顺带修复未勾选的问题。\n', v0=plc_model)
             + json.dumps(repair_payload, ensure_ascii=False, indent=2)
         )
         task_id = f"{project_id}:{version_id}"
@@ -7636,7 +7575,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "project_id": project_id,
             "version_id": version_id,
             "phase": "compile",
-            "summary": f"诊断修复：{report.get('summary', '')}",
+            "summary": tr('诊断修复：{v0}', v0=report.get('summary', '')),
             "parent_version_id": base_version_id,
             "source_report_id": report_id,
             "selected_finding_ids": selected_ids,
@@ -7647,9 +7586,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.store.add_message(
             project_id,
             "assistant",
-            f"已确认 {len(findings)} 项问题，正在基于 "
-            f"{version_display_name(base_version_id)} 生成新的修复版本"
-            f"（{version_display_name(version_id)}）。",
+            tr('已确认 {v0} 项问题，正在基于 {v1} 生成新的修复版本（{v2}）。', v0=len(findings), v1=version_display_name(base_version_id), v2=version_display_name(version_id)),
             kind="system",
             metadata={
                 "workflow_mode": "inspection_repair",
@@ -7657,9 +7594,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 "report_id": report_id,
             },
         )
-        self._set_busy(True, "正在生成诊断修复版本")
+        self._set_busy(True, tr('正在生成诊断修复版本'))
         self.activity_panel.reset()
-        self.activity_panel.set_status("正在生成严格增量修复")
+        self.activity_panel.set_status(tr('正在生成严格增量修复'))
         thread = CompilerThread(
             task_id,
             request,
@@ -7691,10 +7628,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     def _confirm_review(self, project_id, spec):
         if self.active_task:
-            self.statusBar().showMessage("当前已有任务运行。", 3000)
+            self.statusBar().showMessage(tr('当前已有任务运行。'), 3000)
             return
         if not self._ensure_api_configured():
-            self.statusBar().showMessage("需要先完成 API 配置。", 4000)
+            self.statusBar().showMessage(tr('需要先完成 API 配置。'), 4000)
             return
         project = self.store.get_project(project_id)
         pending = project.get("pending_review")
@@ -7705,9 +7642,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
             profile = self._active_profile()
             QMessageBox.warning(
                 self,
-                "当前模型不支持图片",
-                f"{profile.get('model') or '当前模型'} 不能继续处理本次图片需求。\n\n"
-                "请切换回 deepseek-v4-flash-vision-exp 或 glm-5.3-flash。",
+                tr('当前模型不支持图片'),
+                tr('{v0} 不能继续处理本次图片需求。\n\n请切换回 deepseek-v4-flash-vision-exp 或 glm-5.3-flash。', v0=profile.get('model') or tr('当前模型')),
             )
             return
         try:
@@ -7718,7 +7654,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         except Exception as error:
             QMessageBox.warning(
                 self,
-                "图片附件不可用",
+                tr('图片附件不可用'),
                 naturalize_display_text(error),
             )
             return
@@ -7728,7 +7664,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.store.add_message(
             project_id,
             "assistant",
-            "确认规格已锁定，开始生成并执行硬校验。",
+            tr('确认规格已锁定，开始生成并执行硬校验。'),
             kind="system",
         )
         project = self.store.get_project(project_id)
@@ -7761,12 +7697,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "plc_model": plc_model,
             "image_attachments": copy.deepcopy(image_records),
         }
-        self._set_busy(True, "正在生成程序")
+        self._set_busy(True, tr('正在生成程序'))
         self.activity_panel.reset()
-        self.activity_panel.set_status("准备生成")
+        self.activity_panel.set_status(tr('准备生成'))
         thread = CompilerThread(
             task_id,
-            f"目标 PLC 型号：{plc_model}\n{pending['request']}",
+            tr('目标 PLC 型号：{v0}\n{v1}', v0=plc_model, v1=pending['request']),
             effort,
             target_mode,
             output_dir,
@@ -7851,16 +7787,16 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     @staticmethod
     def _build_confirmed_context(spec, project):
-        parts = [f"目标 PLC: {project.get('plc_model', 'FX3U')}"]
+        parts = [tr('目标 PLC: {v0}', v0=project.get('plc_model', 'FX3U'))]
         if spec.get("summary"):
-            parts.append(f"确认后的需求摘要: {spec['summary']}")
+            parts.append(tr('确认后的需求摘要: {v0}', v0=spec['summary']))
         approach = spec.get("selected_approach") or {}
         if approach:
             parts.append(
-                f"方案: {approach.get('name', '')}——{approach.get('description', '')}"
+                tr('方案: {v0}——{v1}', v0=approach.get('name', ''), v1=approach.get('description', ''))
             )
             if approach.get("generation_guide"):
-                parts.append(f"方案生成要点: {approach['generation_guide']}")
+                parts.append(tr('方案生成要点: {v0}', v0=approach['generation_guide']))
         for parameter in spec.get("parameters", []) or []:
             if not isinstance(parameter, dict):
                 continue
@@ -7871,10 +7807,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
         for question, answer in spec.get("missing_answers", {}).items():
             parts.append(f"{question}: {answer}")
         if spec.get("user_notes"):
-            parts.append(f"用户补充: {spec['user_notes']}")
+            parts.append(tr('用户补充: {v0}', v0=spec['user_notes']))
         if spec.get("io_allocation_raw"):
             parts.append(
-                "【软元件分配——整个程序必须一致使用】\n"
+                '【软元件分配——整个程序必须一致使用】\n'
                 + spec["io_allocation_raw"]
             )
         return "\n".join(parts)
@@ -7919,11 +7855,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
             task["project_id"],
             "assistant",
             (
-                f"程序和 CSV 已生成。版本：{task['version_id']}。"
-                "方案约束尚未满足；可以先导出或写入 GX Works2 检查，"
-                "再点击“修复方案约束”决定是否修复。"
+                tr('程序和 CSV 已生成。版本：{v0}。方案约束尚未满足；可以先导出或写入 GX Works2 检查，再点击“修复方案约束”决定是否修复。', v0=task['version_id'])
                 if contract_mismatch
-                else f"程序已生成并通过校验。版本：{task['version_id']}"
+                else tr('程序已生成并通过校验。版本：{v0}', v0=task['version_id'])
             ),
             kind="generation",
             metadata={"version_id": task["version_id"]},
@@ -7932,7 +7866,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self.store.add_message(
                 task["project_id"],
                 "assistant",
-                "自动基础评审已完成；建议项不会阻止版本保存。",
+                tr('自动基础评审已完成；建议项不会阻止版本保存。'),
                 kind="inspection_report",
                 metadata={
                     "report_id": metadata["review_report_id"],
@@ -7976,18 +7910,17 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self._stop_repair_status_timer()
         self.active_task = None
         completion_status = (
-            "CSV 已生成 · 方案约束待处理"
+            tr('CSV 已生成 · 方案约束待处理')
             if contract_mismatch
-            else "生成完成"
+            else tr('生成完成')
         )
         self._set_busy(False, completion_status)
         self.activity_panel.set_status(completion_status)
         self.statusBar().showMessage(
             (
-                f"{version_display_name(version_id)}原始 CSV 已保存；"
-                "可先导入 GX Works2，再决定是否修复"
+                tr('{v0}原始 CSV 已保存；可先导入 GX Works2，再决定是否修复', v0=version_display_name(version_id))
                 if contract_mismatch
-                else f"{version_display_name(version_id)}已生成并保存"
+                else tr('{v0}已生成并保存', v0=version_display_name(version_id))
             ),
             7000 if contract_mismatch else 5000,
         )
@@ -8015,7 +7948,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.store.add_message(
             task["project_id"],
             "assistant",
-            f"生成失败：{naturalize_display_text(error)}\n可修改需求后重新发送。",
+            tr('生成失败：{v0}\n可修改需求后重新发送。', v0=naturalize_display_text(error)),
             kind="system",
         )
         project_id = task["project_id"]
@@ -8026,7 +7959,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             )
         self._stop_repair_status_timer()
         self.active_task = None
-        self._set_busy(False, "生成失败")
+        self._set_busy(False, tr('生成失败'))
         self.activity_panel.show_error(naturalize_display_text(error))
         if self.current_project_id == project_id:
             self._render_conversation(self.store.get_project(project_id))
@@ -8066,6 +7999,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
             else:
                 self.activity_panel.append_content(rendered)
         streams.clear()
+        if hasattr(self, "activity_panel"):
+            self.activity_panel.flush_display()
 
     def _progress_updated(self, task_id, payload):
         if not self.active_task or self.active_task["id"] != task_id:
@@ -8090,12 +8025,11 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return
         self._repair_wait_seconds += 1
         message = (
-            "AI 自动修复中 "
-            f"{self._repair_wait_seconds} 秒 / 最长 120 秒"
+            tr('AI 自动修复中 {v0} 秒 / 最长 120 秒', v0=self._repair_wait_seconds)
         )
         self.activity_panel.set_status(message)
         self.conversation_status.setText(message)
-        self.status_runtime.setText(f"状态: {message}")
+        self.status_runtime.setText(tr('状态: {v0}', v0=message))
 
     def _stop_repair_status_timer(self):
         self._repair_status_timer.stop()
@@ -8112,14 +8046,15 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.workflow_combo.setEnabled(not busy and project_enabled)
         self.sfc_button.setEnabled(not busy and project_enabled)
         self.image_attachment_button.setEnabled(not busy and project_enabled)
+        self.settings_button.setEnabled(not busy)
         self.conversation_status.setText(status)
         set_codicon(
             self.send_button,
             "sync" if busy else "sparkle",
-            "任务运行中" if busy else "分析需求",
+            tr('任务运行中') if busy else tr('分析需求'),
             10,
         )
-        self.status_runtime.setText(f"状态: {status}")
+        self.status_runtime.setText(tr('状态: {v0}', v0=status))
         self._update_workflow_ui()
 
     def _open_sfc_workspace(self):
@@ -8133,7 +8068,20 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self.composer_edit.setFocus()
 
     def _open_api_settings(self):
+        if self.active_task or self._active_worker_threads:
+            self.statusBar().showMessage(tr('请等待当前任务结束后再修改设置。'), 4000)
+            return
         self._show_api_settings(initial_setup=False)
+
+    def _language_changed(self, _language):
+        if not hasattr(self, "activity_panel"):
+            return
+        self._activity_display_streams = {}
+        self.activity_panel.content_edit.clear()
+        self.activity_panel._language_guards = {}
+        self.activity_panel.set_status(tr('等待中'))
+        self._update_workflow_ui()
+        self._update_titlebar_density()
 
     @staticmethod
     def _api_key_available():
@@ -8162,26 +8110,25 @@ class _IndustrialWorkbenchUI(QMainWindow):
             if not dialog.api_key_configured:
                 reset_model_provider()
                 self._update_workflow_ui()
-                self.statusBar().showMessage("API Key 已清除。", 4000)
+                self.statusBar().showMessage(tr('设置已更新；尚未配置 API Key。'), 4000)
                 return not require_key
             try:
                 reload_model_provider()
                 self._update_workflow_ui()
-                self.statusBar().showMessage("API 配置已更新", 4000)
+                self.statusBar().showMessage(tr('设置已更新'), 4000)
                 return True
             except Exception as error:
                 QMessageBox.critical(
                     self,
-                    "API 配置错误",
-                    f"重新加载失败：\n"
-                    f"{naturalize_display_text(error)}",
+                    tr('API 配置错误'),
+                    tr('重新加载失败：\n{v0}', v0=naturalize_display_text(error)),
                 )
                 return False
         return False
 
     def _repair_current_contract_mismatch(self):
         if self.active_task:
-            self.statusBar().showMessage("当前已有任务运行。", 3000)
+            self.statusBar().showMessage(tr('当前已有任务运行。'), 3000)
             return
         if not self.current_project_id or not self.current_version_id:
             return
@@ -8194,20 +8141,20 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return
         mismatch = version.get("contract_mismatch") or {}
         if not mismatch:
-            self.statusBar().showMessage("当前版本没有待修复的方案约束。", 4000)
+            self.statusBar().showMessage(tr('当前版本没有待修复的方案约束。'), 4000)
             return
 
         selected = self._version_with_json(project, version_id)
         if not selected or not isinstance(selected[1], dict):
-            self.statusBar().showMessage("当前版本没有可修复的梯形图 JSON。", 4000)
+            self.statusBar().showMessage(tr('当前版本没有可修复的梯形图 JSON。'), 4000)
             return
         _version, previous_json = selected
         confirmed_spec = self._version_confirmed_spec(version)
         if not confirmed_spec:
             QMessageBox.warning(
                 self,
-                "无法修复",
-                "当前版本缺少已确认规格快照，不能自动修改实现方案。",
+                tr('无法修复'),
+                tr('当前版本缺少已确认规格快照，不能自动修改实现方案。'),
             )
             return
 
@@ -8226,7 +8173,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         except Exception as error:
             QMessageBox.warning(
                 self,
-                "无法建立修复计划",
+                tr('无法建立修复计划'),
                 naturalize_display_text(error),
             )
             return
@@ -8234,8 +8181,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         if plan.get("repairability") == "not_needed":
             QMessageBox.information(
                 self,
-                "无需修复",
-                "重新检查后当前程序已经满足 generation_contract。",
+                tr('无需修复'),
+                tr('重新检查后当前程序已经满足 generation_contract。'),
             )
             return
 
@@ -8246,12 +8193,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
             )
             QMessageBox.warning(
                 self,
-                "无法安全自动修复",
+                tr('无法安全自动修复'),
                 (
-                    f"{plan.get('reason', '当前约束缺少可定位的语义上下文')}\n\n"
-                    f"{details}\n\n"
-                    "系统不会再让 AI 猜测 MOV/SET/RST 等指令应该放在哪里。\n"
-                    "请在已确认方案中补充目标软元件、状态寄存器或具体实现语义后再生成。"
+                    tr('{v0}\n\n{v1}\n\n系统不会再让 AI 猜测 MOV/SET/RST 等指令应该放在哪里。\n请在已确认方案中补充目标软元件、状态寄存器或具体实现语义后再生成。', v0=plan.get('reason', tr('当前约束缺少可定位的语义上下文')), v1=details)
                 ),
             )
             return
@@ -8261,14 +8205,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
         )
         answer = QMessageBox.question(
             self,
-            "确认受限方案约束修复",
+            tr('确认受限方案约束修复'),
             (
-                f"基础版本：{version_display_name(version_id)}\n"
-                f"原始 CSV 已保留：{csv_name}\n\n"
-                "这次不会重新生成整份程序，只允许修改计划中的既有梯级，"
-                "并禁止引入计划外软元件。\n\n"
-                f"{format_contract_repair_plan(plan)}\n\n"
-                "确认后创建一个新的修复版本；原始 CSV 不会覆盖。"
+                tr('基础版本：{v0}\n原始 CSV 已保留：{v1}\n\n这次不会重新生成整份程序，只允许修改计划中的既有梯级，并禁止引入计划外软元件。\n\n{v2}\n\n确认后创建一个新的修复版本；原始 CSV 不会覆盖。', v0=version_display_name(version_id), v1=csv_name, v2=format_contract_repair_plan(plan))
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -8276,7 +8215,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         if not self._ensure_api_configured():
-            self.statusBar().showMessage("修复需要先完成 API 配置。", 4000)
+            self.statusBar().showMessage(tr('修复需要先完成 API 配置。'), 4000)
             return
 
         new_version_id, output_dir = self.store.prepare_version(project_id)
@@ -8299,7 +8238,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "project_id": project_id,
             "version_id": new_version_id,
             "phase": "compile",
-            "summary": f"方案约束受限修复：{plan.get('plan_id')}",
+            "summary": tr('方案约束受限修复：{v0}', v0=plan.get('plan_id')),
             "parent_version_id": version_id,
             "confirmed_spec_snapshot": copy.deepcopy(confirmed_spec),
             "confirmed_spec_hash": self._json_sha256(confirmed_spec),
@@ -8310,15 +8249,13 @@ class _IndustrialWorkbenchUI(QMainWindow):
             project_id,
             "assistant",
             (
-                f"已确认基于{version_display_name(version_id)}执行受限方案约束修复；"
-                f"允许修改梯级 {', '.join(map(str, plan['allowed_rung_ids']))}。"
-                "原始版本和 CSV 保持不变。"
+                tr('已确认基于{v0}执行受限方案约束修复；允许修改梯级 {v1}。原始版本和 CSV 保持不变。', v0=version_display_name(version_id), v1=', '.join(map(str, plan['allowed_rung_ids'])))
             ),
             kind="system",
         )
-        self._set_busy(True, "正在执行受限方案约束修复")
+        self._set_busy(True, tr('正在执行受限方案约束修复'))
         self.activity_panel.reset()
-        self.activity_panel.set_status("AI 正在生成受限 partial patch")
+        self.activity_panel.set_status(tr('AI 正在生成受限 partial patch'))
 
         thread = CompilerThread(
             task_id,
@@ -8363,11 +8300,11 @@ class _IndustrialWorkbenchUI(QMainWindow):
         if version.get("target_mode") == "ladder":
             source = version_dir / artifacts.get("program_csv", "")
             if not source.exists():
-                QMessageBox.critical(self, "导出失败", "当前版本缺少程序 CSV。")
+                QMessageBox.critical(self, tr('导出失败'), tr('当前版本缺少程序 CSV。'))
                 return
             destination, _ = QFileDialog.getSaveFileName(
                 self,
-                "导出 GX Works2 程序",
+                tr('导出 GX Works2 程序'),
                 f"{self.current_version_id}_program.csv",
                 "CSV Files (*.csv)",
                 options=QFileDialog.Option.DontUseNativeDialog,
@@ -8380,16 +8317,16 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 target = Path(destination)
                 shutil.copy2(
                     comment_source,
-                    target.with_name(f"{target.stem}_注释{target.suffix}"),
+                    target.with_name(tr('{v0}_注释{v1}', v0=target.stem, v1=target.suffix)),
                 )
         else:
             source = version_dir / artifacts.get("st", "")
             if not source.exists():
-                QMessageBox.critical(self, "导出失败", "当前版本缺少 ST 文件。")
+                QMessageBox.critical(self, tr('导出失败'), tr('当前版本缺少 ST 文件。'))
                 return
             destination, _ = QFileDialog.getSaveFileName(
                 self,
-                "导出 ST 程序",
+                tr('导出 ST 程序'),
                 f"{version_display_name(self.current_version_id).replace(' ', '')}.st",
                 "ST Files (*.st);;Text Files (*.txt)",
                 options=QFileDialog.Option.DontUseNativeDialog,
@@ -8397,12 +8334,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
             if not destination:
                 return
             shutil.copy2(source, destination)
-        self.statusBar().showMessage(f"已导出到 {destination}", 6000)
+        self.statusBar().showMessage(tr('已导出到 {v0}', v0=destination), 6000)
 
     def _open_gxw_structured_reader(self):
         source, _ = QFileDialog.getOpenFileName(
             self,
-            "选择 GX Works2 Structured Ladder/FBD 工程",
+            tr('选择 GX Works2 Structured Ladder/FBD 工程'),
             "",
             "GX Works2 Project (*.gxw);;All Files (*.*)",
             options=QFileDialog.Option.DontUseNativeDialog,
@@ -8419,14 +8356,14 @@ class _IndustrialWorkbenchUI(QMainWindow):
             resolver = GXWProjectResolver.from_file(source)
             candidates = resolver.program_pou_names()
             if not candidates:
-                raise GXWFormatError("工程中没有找到 *.Program.pou。")
+                raise GXWFormatError(tr('工程中没有找到 *.Program.pou。'))
 
             selected = candidates[0]
             if len(candidates) > 1:
                 selected, accepted = QInputDialog.getItem(
                     self,
-                    "选择程序体",
-                    "检测到多个 Program.pou，请选择要解析的程序体：",
+                    tr('选择程序体'),
+                    tr('检测到多个 Program.pou，请选择要解析的程序体：'),
                     candidates,
                     0,
                     False,
@@ -8443,28 +8380,27 @@ class _IndustrialWorkbenchUI(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(
                 self,
-                "GXW 解析失败",
-                "当前入口只针对已验证的 Structured Ladder/FBD GXW 结构。\n\n"
+                tr('GXW 解析失败'),
+                tr('当前入口只针对已验证的 Structured Ladder/FBD GXW 结构。\n\n')
                 + naturalize_display_text(str(exc)),
             )
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("GXW 结构化梯形图解析（只读）")
+        dialog.setWindowTitle(tr('GXW 结构化梯形图解析（只读）'))
         dialog.resize(900, 640)
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
 
         title = QLabel(
-            f"{Path(source).name}  ·  {selected}  ·  "
-            f"{len(program.nodes)} 节点  ·  {len(program.wires)} 连线"
+            tr('{v0}  ·  {v1}  ·  {v2} 节点  ·  {v3} 连线', v0=Path(source).name, v1=selected, v2=len(program.nodes), v3=len(program.wires))
         )
         title.setObjectName("CanvasTitle")
         layout.addWidget(title)
 
         note = QLabel(
-            "实验性只读解析：不会修改GXW文件。未知结构会保留或报错，不会猜测。"
+            tr('实验性只读解析：不会修改GXW文件。未知结构会保留或报错，不会猜测。')
         )
         note.setWordWrap(True)
         note.setObjectName("HelperText")
@@ -8477,37 +8413,36 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
         footer = QHBoxLayout()
         footer.addStretch(1)
-        close_button = QPushButton("关闭")
+        close_button = QPushButton(tr('关闭'))
         close_button.clicked.connect(dialog.accept)
         footer.addWidget(close_button)
         layout.addLayout(footer)
 
         dialog.exec()
         self.statusBar().showMessage(
-            f"已只读解析 {Path(source).name}：{len(program.nodes)} 个节点，"
-            f"{len(program.wires)} 条连线",
+            tr('已只读解析 {v0}：{v1} 个节点，{v2} 条连线', v0=Path(source).name, v1=len(program.nodes), v2=len(program.wires)),
             6000,
         )
 
     def _set_gx_sync_status(self, status, detail=""):
         labels = {
-            "unknown": "GX：未检查",
-            "checking": "GX：检查中",
-            "synced": "GX：已同步",
-            "project_changed": "GX：项目有修改",
-            "gx_changed": "GX：GX有修改",
-            "conflict": "GX：双方冲突",
-            "unsaved": "GX：工程未保存",
-            "pulling": "GX：正在回读",
-            "pushing": "GX：正在写入",
-            "error": "GX：同步异常",
+            "unknown": tr('GX：未检查'),
+            "checking": tr('GX：检查中'),
+            "synced": tr('GX：已同步'),
+            "project_changed": tr('GX：项目有修改'),
+            "gx_changed": tr('GX：GX有修改'),
+            "conflict": tr('GX：双方冲突'),
+            "unsaved": tr('GX：工程未保存'),
+            "pulling": tr('GX：正在回读'),
+            "pushing": tr('GX：正在写入'),
+            "error": tr('GX：同步异常'),
         }
         if hasattr(self, "gxworks2_sync_status"):
             self.gxworks2_sync_status.setText(labels.get(status, labels["unknown"]))
             self.gxworks2_sync_status.setToolTip(
                 naturalize_display_text(detail)
                 if detail
-                else "当前项目版本与GX Works2的同步状态"
+                else tr('当前项目版本与GX Works2的同步状态')
             )
 
     def _gx_sync_busy(self):
@@ -8540,18 +8475,18 @@ class _IndustrialWorkbenchUI(QMainWindow):
             set_codicon(
                 self.gxworks2_import_button,
                 "export",
-                "写入 GX Works2",
+                tr('写入 GX Works2'),
                 10,
             )
         if hasattr(self, "gxworks2_pull_button"):
             set_codicon(
                 self.gxworks2_pull_button,
                 "sync",
-                "读取 GX Works2",
+                tr('读取 GX Works2'),
                 10,
             )
         if hasattr(self, "gxworks2_advanced_button"):
-            self.gxworks2_advanced_button.setText("高级同步")
+            self.gxworks2_advanced_button.setText(tr('高级同步'))
 
     def _update_gx_sync_button_enabled(self):
         if not hasattr(self, "gxworks2_import_button"):
@@ -8572,18 +8507,18 @@ class _IndustrialWorkbenchUI(QMainWindow):
         project_id = project_id or self.current_project_id
         version_id = version_id or self.current_version_id
         if not project_id or not version_id:
-            raise ValueError("请先选择一个已生成的梯形图版本。")
+            raise ValueError(tr('请先选择一个已生成的梯形图版本。'))
         version = self.store.get_version(project_id, version_id)
         if not version or version.get("target_mode") != "ladder":
-            raise ValueError("只有梯形图版本可以与GX Works2同步。")
+            raise ValueError(tr('只有梯形图版本可以与GX Works2同步。'))
         version_dir = self.store.version_dir(project_id, version_id)
         artifacts = version.get("artifacts", {}) or {}
         program_path = version_dir / str(artifacts.get("program_csv") or "")
         comment_path = version_dir / str(artifacts.get("comment_csv") or "")
         if not program_path.is_file():
-            raise ValueError("当前版本缺少程序CSV。")
+            raise ValueError(tr('当前版本缺少程序CSV。'))
         if not comment_path.is_file():
-            raise ValueError("当前版本缺少软元件注释CSV。")
+            raise ValueError(tr('当前版本缺少软元件注释CSV。'))
         context = {
             "project_id": project_id,
             "version_id": version_id,
@@ -8605,10 +8540,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
     def _gx_pull_request(self):
         project_id = self.current_project_id
         if not project_id:
-            raise ValueError("请先选择一个项目。")
+            raise ValueError(tr('请先选择一个项目。'))
         project = self.store.get_project(project_id)
         if not project:
-            raise ValueError("当前项目不存在。")
+            raise ValueError(tr('当前项目不存在。'))
         version = (
             self.store.get_version(project_id, self.current_version_id)
             if self.current_version_id
@@ -8641,12 +8576,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     def _publish_current_version_to_gxworks2(self):
         if self._gx_sync_busy():
-            self.statusBar().showMessage("GX Works2操作正在运行。", 3000)
+            self.statusBar().showMessage(tr('GX Works2操作正在运行。'), 3000)
             return
         try:
             request = self._gx_sync_request_for_version()
         except Exception as error:
-            QMessageBox.warning(self, "无法写入", naturalize_display_text(error))
+            QMessageBox.warning(self, tr('无法写入'), naturalize_display_text(error))
             return
         self._gx_sync_intent = "publish"
         self._import_current_version_to_gxworks2(
@@ -8662,7 +8597,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     def _start_gxworks2_inspection(self, intent):
         if self._gx_sync_busy():
-            self.statusBar().showMessage("GX Works2操作正在运行。", 3000)
+            self.statusBar().showMessage(tr('GX Works2操作正在运行。'), 3000)
             return
         try:
             request = (
@@ -8671,16 +8606,16 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 else self._gx_sync_request_for_version()
             )
         except Exception as error:
-            title = "无法读取" if intent == "pull" else "无法高级同步"
+            title = tr('无法读取') if intent == "pull" else tr('无法高级同步')
             QMessageBox.warning(self, title, naturalize_display_text(error))
             return
         self._gx_sync_intent = str(intent or "reconcile")
         self._pending_gx_sync_result = None
         self._gx_sync_request = request
         detail = (
-            "正在读取GX Works2当前MAIN和软元件注释"
+            tr('正在读取GX Works2当前MAIN和软元件注释')
             if self._gx_sync_intent == "pull"
-            else "正在比较项目与GX Works2"
+            else tr('正在比较项目与GX Works2')
         )
         self._set_gx_sync_status("checking", detail)
         self._set_gx_action_buttons_enabled(False)
@@ -8689,8 +8624,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
             if self._gx_sync_intent == "pull"
             else self.gxworks2_advanced_button
         )
-        active_button.setText("正在读取…" if self._gx_sync_intent == "pull" else "正在检查…")
-        self.statusBar().showMessage("正在读取GX Works2当前MAIN和软元件注释…")
+        active_button.setText(tr('正在读取…') if self._gx_sync_intent == "pull" else tr('正在检查…'))
+        self.statusBar().showMessage(tr('正在读取GX Works2当前MAIN和软元件注释…'))
         thread = GXWorks2SyncInspectThread(
             request.get("program_path"),
             request.get("comment_path"),
@@ -8708,28 +8643,28 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     def _gxworks2_sync_progress(self, stage, message):
         labels = {
-            "validate": "正在校验…",
-            "validate_local": "正在校验…",
-            "check_gxworks2": "检查GX进程…",
-            "check_project": "检查GX工程…",
-            "check_program": "检查MAIN…",
-            "inspect_project": "读取GX状态…",
-            "activate_main": "激活MAIN…",
-            "activate_comments": "打开注释…",
-            "open_export_menu": "打开导出命令…",
-            "wait_program_file_dialog": "等待程序窗口…",
-            "wait_comment_file_dialog": "等待注释窗口…",
-            "submit_program_export_path": "提交程序路径…",
-            "submit_comment_export_path": "提交注释路径…",
-            "wait_program_export_file": "等待程序CSV…",
-            "wait_comment_export_file": "等待注释CSV…",
-            "export_program": "读取MAIN…",
-            "validate_program_csv": "校验MAIN…",
-            "export_comments": "读取注释…",
-            "validate_comment_csv": "校验注释…",
-            "write_manifest": "保存校验信息…",
-            "retry_export": "正在安全重试…",
-            "compare": "比较版本…",
+            "validate": tr('正在校验…'),
+            "validate_local": tr('正在校验…'),
+            "check_gxworks2": tr('检查GX进程…'),
+            "check_project": tr('检查GX工程…'),
+            "check_program": tr('检查MAIN…'),
+            "inspect_project": tr('读取GX状态…'),
+            "activate_main": tr('激活MAIN…'),
+            "activate_comments": tr('打开注释…'),
+            "open_export_menu": tr('打开导出命令…'),
+            "wait_program_file_dialog": tr('等待程序窗口…'),
+            "wait_comment_file_dialog": tr('等待注释窗口…'),
+            "submit_program_export_path": tr('提交程序路径…'),
+            "submit_comment_export_path": tr('提交注释路径…'),
+            "wait_program_export_file": tr('等待程序CSV…'),
+            "wait_comment_export_file": tr('等待注释CSV…'),
+            "export_program": tr('读取MAIN…'),
+            "validate_program_csv": tr('校验MAIN…'),
+            "export_comments": tr('读取注释…'),
+            "validate_comment_csv": tr('校验注释…'),
+            "write_manifest": tr('保存校验信息…'),
+            "retry_export": tr('正在安全重试…'),
+            "compare": tr('比较版本…'),
         }
         intent = getattr(self, "_gx_sync_intent", "reconcile")
         button = (
@@ -8738,7 +8673,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             else getattr(self, "gxworks2_advanced_button", None)
         )
         if button is not None:
-            button.setText(labels.get(stage, "处理中…"))
+            button.setText(labels.get(stage, tr('处理中…')))
         self.statusBar().showMessage(naturalize_display_text(message))
 
     @staticmethod
@@ -8748,24 +8683,23 @@ class _IndustrialWorkbenchUI(QMainWindow):
         lines = [
             naturalize_display_text(result.message),
             "",
-            f"项目指令：{difference.get('project_instruction_count', 0)} 条",
-            f"GX Works2指令：{difference.get('gxworks2_instruction_count', 0)} 条",
-            f"发现差异：{difference.get('changed_instruction_count', 0)} 处",
+            tr('项目指令：{v0} 条', v0=difference.get('project_instruction_count', 0)),
+            tr('GX Works2指令：{v0} 条', v0=difference.get('gxworks2_instruction_count', 0)),
+            tr('发现差异：{v0} 处', v0=difference.get('changed_instruction_count', 0)),
         ]
         if changes:
-            lines.extend(["", "前几处差异："])
+            lines.extend(["", tr('前几处差异：')])
             for item in changes[:6]:
-                project = item.get("project") or ["无", ""]
-                gx = item.get("gxworks2") or ["无", ""]
+                project = item.get("project") or [tr('无'), ""]
+                gx = item.get("gxworks2") or [tr('无'), ""]
                 lines.append(
-                    f"第{item.get('index')}条：项目 {project[0]} {project[1]}"
-                    f"；GX {gx[0]} {gx[1]}"
+                    tr('第{v0}条：项目 {v1} {v2}；GX {v3} {v4}', v0=item.get('index'), v1=project[0], v2=project[1], v3=gx[0], v4=gx[1])
                 )
         lines.extend(
             [
                 "",
-                "“使用项目版本”会先备份GX，再覆盖当前MAIN和注释。",
-                "“从GX创建新版本”不会删除当前项目版本。",
+                tr('“使用项目版本”会先备份GX，再覆盖当前MAIN和注释。'),
+                tr('“从GX创建新版本”不会删除当前项目版本。'),
             ]
         )
         return "\n".join(lines)
@@ -8775,15 +8709,15 @@ class _IndustrialWorkbenchUI(QMainWindow):
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Warning)
         dialog.setWindowTitle(
-            "首次同步需要选择" if result.status.value == "unbound" else "GX Works2同步冲突"
+            tr('首次同步需要选择') if result.status.value == "unbound" else tr('GX Works2同步冲突')
         )
         dialog.setText(self._gx_conflict_text(result))
         use_project = dialog.addButton(
-            "使用项目版本",
+            tr('使用项目版本'),
             QMessageBox.ButtonRole.AcceptRole,
         )
         use_gx = dialog.addButton(
-            "从GX创建新版本",
+            tr('从GX创建新版本'),
             QMessageBox.ButtonRole.ActionRole,
         )
         dialog.addButton(QMessageBox.StandardButton.Cancel)
@@ -8824,7 +8758,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                     if getattr(self, "_gx_sync_intent", "reconcile") == "pull"
                     else self.gxworks2_advanced_button
                 )
-                active_button.setText("准备重试…")
+                active_button.setText(tr('准备重试…'))
                 if self._gxworks2_sync_thread is None:
                     QTimer.singleShot(0, self._run_pending_gx_sync_retry)
             return
@@ -8838,10 +8772,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 gx_save = (result.details or {}).get("gx_save", {}) or {}
                 self._set_gx_sync_status(
                     "unsaved" if gx_save and not gx_save.get("success") else "synced",
-                    gx_save.get("message") or "GX Works2内容与当前版本一致",
+                    gx_save.get("message") or tr('GX Works2内容与当前版本一致'),
                 )
-                self.activity_panel.set_status("GX Works2内容与当前版本一致，无需创建新版本")
-                self.statusBar().showMessage("GX Works2内容与当前版本一致，无需回读。", 6000)
+                self.activity_panel.set_status(tr('GX Works2内容与当前版本一致，无需创建新版本'))
+                self.statusBar().showMessage(tr('GX Works2内容与当前版本一致，无需回读。'), 6000)
             else:
                 self._start_gxworks2_pull(result, request)
             return
@@ -8852,9 +8786,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 gx_save.get("message") or result.message,
             )
             self.activity_panel.set_status(
-                "内容一致，GX工程尚未保存"
+                tr('内容一致，GX工程尚未保存')
                 if gx_save and not gx_save.get("success")
-                else "项目与GX Works2已同步"
+                else tr('项目与GX Works2已同步')
             )
             self.statusBar().showMessage(
                 naturalize_display_text(gx_save.get("message") or result.message),
@@ -8887,7 +8821,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 if getattr(self, "_gx_sync_intent", "reconcile") == "pull"
                 else self.gxworks2_advanced_button
             )
-            active_button.setText("准备重试…")
+            active_button.setText(tr('准备重试…'))
             QTimer.singleShot(0, self._run_pending_gx_sync_retry)
             return
         self._reset_gx_action_buttons()
@@ -8913,7 +8847,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         try:
             version_id, output_dir = self.store.prepare_version(request["project_id"])
         except Exception as error:
-            QMessageBox.warning(self, "无法创建同步版本", naturalize_display_text(error))
+            QMessageBox.warning(self, tr('无法创建同步版本'), naturalize_display_text(error))
             return
         self._pending_gx_pull = {
             "result": result,
@@ -8921,10 +8855,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
             "version_id": version_id,
             "output_dir": output_dir,
         }
-        self._set_gx_sync_status("pulling", "正在把GX Works2人工修改保存为新版本")
+        self._set_gx_sync_status("pulling", tr('正在把GX Works2人工修改保存为新版本'))
         self._set_gx_action_buttons_enabled(False)
-        self.gxworks2_pull_button.setText("正在读取…")
-        self.statusBar().showMessage("正在解析GX Works2程序并创建新的项目版本…")
+        self.gxworks2_pull_button.setText(tr('正在读取…'))
+        self.statusBar().showMessage(tr('正在解析GX Works2程序并创建新的项目版本…'))
         thread = GXWorks2PullThread(
             result.exported_program_path,
             result.exported_comment_path,
@@ -8957,9 +8891,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
         metadata.update(
             {
                 "summary": (
-                    "从GX Works2导入的初始程序"
+                    tr('从GX Works2导入的初始程序')
                     if bootstrap
-                    else "从GX Works2同步的人工修改"
+                    else tr('从GX Works2同步的人工修改')
                 ),
                 "parent_version_id": (
                     None if bootstrap else pending["request"]["version_id"]
@@ -9005,9 +8939,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
             project_id,
             "assistant",
             (
-                f"已从GX Works2导入初始程序并创建{version_display_name(version_id)}。"
+                tr('已从GX Works2导入初始程序并创建{v0}。', v0=version_display_name(version_id))
                 if bootstrap
-                else f"已从GX Works2回读人工修改并创建{version_display_name(version_id)}。"
+                else tr('已从GX Works2回读人工修改并创建{v0}。', v0=version_display_name(version_id))
             ),
             kind="system",
             metadata={
@@ -9024,29 +8958,29 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self._set_gx_sync_status(
             "error" if baseline_error else "unsaved" if save_required else "synced",
             (
-                "新版本已创建，但同步基线保存失败：" + baseline_error
+                tr('新版本已创建，但同步基线保存失败：') + baseline_error
                 if baseline_error
                 else gx_save.get("message")
                 if save_required
-                else "GX Works2人工修改已保存为新的项目版本"
+                else tr('GX Works2人工修改已保存为新的项目版本')
             ),
         )
-        self.activity_panel.set_status("已从GX Works2创建新版本")
+        self.activity_panel.set_status(tr('已从GX Works2创建新版本'))
         self.statusBar().showMessage(
             (
-                f"已创建{version_display_name(version_id)}，但同步基线保存失败"
+                tr('已创建{v0}，但同步基线保存失败', v0=version_display_name(version_id))
                 if baseline_error
-                else f"已创建{version_display_name(version_id)}；{gx_save.get('message')}"
+                else tr('已创建{v0}；{v1}', v0=version_display_name(version_id), v1=gx_save.get('message'))
                 if save_required
-                else f"已创建{version_display_name(version_id)}，项目与GX Works2已同步"
+                else tr('已创建{v0}，项目与GX Works2已同步', v0=version_display_name(version_id))
             ),
             7000,
         )
         if baseline_error:
             QMessageBox.warning(
                 self,
-                "新版本已创建（同步状态未保存）",
-                "GX Works2内容已回读为新版本，但无法保存下次比较所需的同步状态：\n"
+                tr('新版本已创建（同步状态未保存）'),
+                tr('GX Works2内容已回读为新版本，但无法保存下次比较所需的同步状态：\n')
                 + naturalize_display_text(baseline_error),
             )
         self._refresh_projects(self.current_project_id)
@@ -9072,10 +9006,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.activateWindow()
         QMessageBox.warning(
             self,
-            "无法从GX Works2创建版本",
+            tr('无法从GX Works2创建版本'),
             naturalize_display_text(error),
         )
-        self.statusBar().showMessage("GX Works2回读失败，原项目版本未改变", 7000)
+        self.statusBar().showMessage(tr('GX Works2回读失败，原项目版本未改变'), 7000)
 
     def _gxworks2_pull_thread_finished(self):
         self._pending_gx_pull = None
@@ -9096,38 +9030,38 @@ class _IndustrialWorkbenchUI(QMainWindow):
         project_id = project_id or self.current_project_id
         version_id = version_id or self.current_version_id
         if not project_id or not version_id:
-            QMessageBox.warning(self, "无法导入", "请先选择一个已生成的梯形图版本。")
+            QMessageBox.warning(self, tr('无法导入'), tr('请先选择一个已生成的梯形图版本。'))
             return
         version = self.store.get_version(
             project_id, version_id
         )
         if not version or version.get("target_mode") != "ladder":
-            QMessageBox.warning(self, "无法导入", "只有梯形图版本可导入GX Works2。")
+            QMessageBox.warning(self, tr('无法导入'), tr('只有梯形图版本可导入GX Works2。'))
             return
         version_dir = self.store.version_dir(
             project_id, version_id
         )
         csv_path = version_dir / version.get("artifacts", {}).get("program_csv", "")
         if not csv_path.is_file():
-            QMessageBox.critical(self, "导入失败", "当前版本缺少程序CSV。")
+            QMessageBox.critical(self, tr('导入失败'), tr('当前版本缺少程序CSV。'))
             return
         comment_name = version.get("artifacts", {}).get("comment_csv", "")
         if not comment_name:
             QMessageBox.critical(
                 self,
-                "导入失败",
-                "当前版本缺少软元件注释CSV，请重新生成该版本后再导入。",
+                tr('导入失败'),
+                tr('当前版本缺少软元件注释CSV，请重新生成该版本后再导入。'),
             )
             return
         comment_csv_path = version_dir / comment_name
         if not comment_csv_path.is_file():
-            QMessageBox.critical(self, "导入失败", "当前版本缺少软元件注释CSV。")
+            QMessageBox.critical(self, tr('导入失败'), tr('当前版本缺少软元件注释CSV。'))
             return
 
         self._set_gx_action_buttons_enabled(False)
-        self.gxworks2_import_button.setText("正在写入…")
-        self._set_gx_sync_status("pushing", "正在备份并写入GX Works2")
-        self.statusBar().showMessage("正在检查GX Works2与目标工程…")
+        self.gxworks2_import_button.setText(tr('正在写入…'))
+        self._set_gx_sync_status("pushing", tr('正在备份并写入GX Works2'))
+        self.statusBar().showMessage(tr('正在检查GX Works2与目标工程…'))
         import_context = {
             "project_id": project_id,
             "version_id": version_id,
@@ -9156,19 +9090,19 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     def _gxworks2_import_progress(self, stage, message):
         labels = {
-            "validate_csv": "校验CSV…",
-            "validate_comments": "校验注释…",
-            "check_project": "检查工程…",
-            "backup": "备份当前MAIN…",
-            "backup_comments": "备份当前注释…",
-            "compare_baseline": "检查外部修改…",
-            "import": "从CSV读取…",
-            "import_comments": "导入软元件注释…",
-            "verify_roundtrip": "回读复核…",
-            "save_project": "保存GX工程…",
-            "verify": "检查结果…",
+            "validate_csv": tr('校验CSV…'),
+            "validate_comments": tr('校验注释…'),
+            "check_project": tr('检查工程…'),
+            "backup": tr('备份当前MAIN…'),
+            "backup_comments": tr('备份当前注释…'),
+            "compare_baseline": tr('检查外部修改…'),
+            "import": tr('从CSV读取…'),
+            "import_comments": tr('导入软元件注释…'),
+            "verify_roundtrip": tr('回读复核…'),
+            "save_project": tr('保存GX工程…'),
+            "verify": tr('检查结果…'),
         }
-        self.gxworks2_import_button.setText(labels.get(stage, "处理中…"))
+        self.gxworks2_import_button.setText(labels.get(stage, tr('处理中…')))
         self.statusBar().showMessage(naturalize_display_text(message))
 
     def _gxworks2_import_finished(self, result):
@@ -9190,12 +9124,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 )
             backup_lines = []
             if result.backup_path:
-                backup_lines.append(f"程序：{result.backup_path}")
+                backup_lines.append(tr('程序：{v0}', v0=result.backup_path))
             comment_backup = result.details.get("comment_backup_path", "")
             if comment_backup:
-                backup_lines.append(f"软元件注释：{comment_backup}")
+                backup_lines.append(tr('软元件注释：{v0}', v0=comment_backup))
             details = (
-                "\n\n导入前备份：\n" + "\n".join(backup_lines)
+                tr('\n\n导入前备份：\n') + "\n".join(backup_lines)
                 if backup_lines
                 else ""
             )
@@ -9205,7 +9139,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 self.activateWindow()
                 QMessageBox.warning(
                     self,
-                    "写入完成（需要核对）",
+                    tr('写入完成（需要核对）'),
                     display_message + details,
                 )
                 self.statusBar().showMessage(display_message, 10000)
@@ -9218,7 +9152,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 # workbench status instead of blocking on a modal dialog.
                 self.activity_panel.set_status(display_message)
                 self.statusBar().showMessage(
-                    display_message + ("；导入前备份已保留" if details else ""),
+                    display_message + (tr('；导入前备份已保留') if details else ""),
                     10000,
                 )
             return
@@ -9229,7 +9163,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 display_message,
             )
         backup_note = (
-            f"\n\n已保留导入前程序备份：\n{result.backup_path}"
+            tr('\n\n已保留导入前程序备份：\n{v0}', v0=result.backup_path)
             if result.backup_path
             else ""
         )
@@ -9238,7 +9172,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.activateWindow()
         QMessageBox.warning(
             self,
-            "GX Works2写入未完成",
+            tr('GX Works2写入未完成'),
             display_message + backup_note,
         )
         self.statusBar().showMessage(display_message, 8000)
@@ -9261,7 +9195,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
     def _show_simulator_test_menu(self, position):
         menu = QMenu(self.simulator_test_button)
-        regenerate = menu.addAction("重新生成测试方案")
+        regenerate = menu.addAction(tr('重新生成测试方案'))
         regenerate.setEnabled(
             self._simulator_test_plan_thread is None
             and self._simulator_test_execute_thread is None
@@ -9287,12 +9221,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 force_regenerate=force_regenerate,
             )
         except Exception as error:
-            self.simulator_test_button.setText("仿真测试")
-            self._set_busy(False, "仿真测试准备失败")
+            self.simulator_test_button.setText(tr('仿真测试'))
+            self._set_busy(False, tr('仿真测试准备失败'))
             self.simulator_test_button.setEnabled(bool(self.current_version_id))
-            message = f"无法准备仿真测试：{naturalize_display_text(error)}"
+            message = tr('无法准备仿真测试：{v0}', v0=naturalize_display_text(error))
             self.statusBar().showMessage(message, 8000)
-            QMessageBox.warning(self, "无法测试", message)
+            QMessageBox.warning(self, tr('无法测试'), message)
             return None
 
     def _generate_simulator_test_plan_impl(
@@ -9307,17 +9241,17 @@ class _IndustrialWorkbenchUI(QMainWindow):
         ):
             return
         if not self.current_project_id or not self.current_version_id:
-            QMessageBox.warning(self, "无法测试", "请先选择一个已生成的梯形图版本。")
+            QMessageBox.warning(self, tr('无法测试'), tr('请先选择一个已生成的梯形图版本。'))
             return
         version = self.store.get_version(
             self.current_project_id, self.current_version_id
         )
         project = self.store.get_project(self.current_project_id)
         if not version or version.get("target_mode") != "ladder":
-            QMessageBox.warning(self, "无法测试", "只有梯形图版本可进行仿真测试。")
+            QMessageBox.warning(self, tr('无法测试'), tr('只有梯形图版本可进行仿真测试。'))
             return
         if not project or project.get("active_version_id") != self.current_version_id:
-            QMessageBox.warning(self, "无法测试", "只能测试当前启用版本。")
+            QMessageBox.warning(self, tr('无法测试'), tr('只能测试当前启用版本。'))
             return
 
         if not force_regenerate:
@@ -9326,7 +9260,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
             )
             if cached_plan is not None:
                 self.statusBar().showMessage(
-                    "已复用当前版本保存的仿真测试方案。", 6000
+                    tr('已复用当前版本保存的仿真测试方案。'), 6000
                 )
                 self._simulator_test_plan_ready("cached", cached_plan)
                 return
@@ -9335,10 +9269,10 @@ class _IndustrialWorkbenchUI(QMainWindow):
 
         task_id = uuid.uuid4().hex
         self.simulator_test_button.setEnabled(False)
-        self.simulator_test_button.setText("生成测试中…")
-        self._set_busy(True, "AI 正在生成仿真测试方案")
+        self.simulator_test_button.setText(tr('生成测试中…'))
+        self._set_busy(True, tr('AI 正在生成仿真测试方案'))
         self.activity_panel.reset()
-        self.activity_panel.set_status("正在整理程序行为和 I/O")
+        self.activity_panel.set_status(tr('正在整理程序行为和 I/O'))
         thread = SimulatorTestPlanThread(
             task_id,
             self.store,
@@ -9390,9 +9324,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
             return None
 
     def _simulator_test_plan_ready_impl(self, task_id, plan):
-        self.simulator_test_button.setText("仿真测试")
-        self._set_busy(False, "测试方案待确认")
-        self.activity_panel.set_status("测试方案生成完成")
+        self.simulator_test_button.setText(tr('仿真测试'))
+        self._set_busy(False, tr('测试方案待确认'))
+        self.activity_panel.set_status(tr('测试方案生成完成'))
         suite = plan.get("suite") or {}
         tests = suite.get("tests") or []
         step_count = sum(len(item.get("steps") or []) for item in tests)
@@ -9400,50 +9334,44 @@ class _IndustrialWorkbenchUI(QMainWindow):
         fault_count = sum(len(item.get("fault_injections") or []) for item in tests)
         names = "\n".join(
             f"• {index}. "
-            f"{preferred_display_name(item, kind='测试项目', index=index)}"
+            f"{preferred_display_name(item, kind=tr('测试项目'), index=index)}"
             for index, item in enumerate(tests[:8], start=1)
         )
         if len(tests) > 8:
-            names += f"\n• 其余 {len(tests) - 8} 项"
+            names += tr('\n• 其余 {v0} 项', v0=len(tests) - 8)
         cache_note = (
-            "当前版本与程序内容未变化，已复用保存的测试方案。\n"
-            "如需重新生成，请右键“仿真测试”。\n\n"
+            tr('当前版本与程序内容未变化，已复用保存的测试方案。\n如需重新生成，请右键“仿真测试”。\n\n')
             if plan.get("cache_reused")
             else ""
         )
         suite_display_name = preferred_display_name(
             suite,
-            kind="测试方案",
+            kind=tr('测试方案'),
             descriptive_keys=("display_name", "description", "title", "label"),
         )
         message = cache_note + (
-            f"测试方案：{suite_display_name}\n"
-            f"测试 {len(tests)} 项，步骤 {step_count} 个，"
-            f"运行约束 {invariant_count} 项，故障场景 {fault_count} 项。\n\n"
-            f"{names}\n\n"
-            "确认后将依次导入当前程序和注释、启动 GX Simulator2、"
-            "执行测试并保存完整轨迹。"
+            tr('测试方案：{v0}\n测试 {v1} 项，步骤 {v2} 个，运行约束 {v3} 项，故障场景 {v4} 项。\n\n{v5}\n\n确认后将依次导入当前程序和注释、启动 GX Simulator2、执行测试并保存完整轨迹。', v0=suite_display_name, v1=len(tests), v2=step_count, v3=invariant_count, v4=fault_count, v5=names)
         )
         answer = QMessageBox.question(
             self,
-            "确认运行仿真测试",
+            tr('确认运行仿真测试'),
             message,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
-            self.statusBar().showMessage("测试方案已保存，未修改 GX Works2。", 6000)
+            self.statusBar().showMessage(tr('测试方案已保存，未修改 GX Works2。'), 6000)
             self.simulator_test_button.setEnabled(True)
             return
         self._execute_simulator_test_plan(plan)
 
     def _simulator_test_plan_failed(self, task_id, error):
-        self.simulator_test_button.setText("仿真测试")
-        self._set_busy(False, "测试方案生成失败")
+        self.simulator_test_button.setText(tr('仿真测试'))
+        self._set_busy(False, tr('测试方案生成失败'))
         self.simulator_test_button.setEnabled(bool(self.current_version_id))
         display_error = naturalize_display_text(error)
         self.activity_panel.show_error(display_error)
-        QMessageBox.warning(self, "仿真测试方案未生成", display_error)
+        QMessageBox.warning(self, tr('仿真测试方案未生成'), display_error)
 
     def _execute_simulator_test_plan(self, plan):
         task_id = uuid.uuid4().hex
@@ -9453,12 +9381,12 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.simulation_progress_panel.setVisible(True)
         self.simulation_progress_bar.setValue(0)
         self.simulation_progress_percent.setText("0%")
-        self.simulation_progress_current.setText("正在准备 GX Simulator2")
+        self.simulation_progress_current.setText(tr('正在准备 GX Simulator2'))
         self.simulation_progress_log.clear()
-        self.simulation_progress_log.appendPlainText("0%  开始仿真测试工作流")
+        self.simulation_progress_log.appendPlainText(tr('0%  开始仿真测试工作流'))
         self.simulator_test_button.setEnabled(False)
-        self.simulator_test_button.setText("仿真运行中…")
-        self._set_busy(True, "正在准备 GX Simulator2")
+        self.simulator_test_button.setText(tr('仿真运行中…'))
+        self._set_busy(True, tr('正在准备 GX Simulator2'))
         thread = SimulatorTestExecuteThread(
             task_id,
             self.store,
@@ -9492,7 +9420,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         update = dict(payload or {})
         percent = max(0, min(100, int(update.get("percent") or 0)))
         message = naturalize_display_text(
-            update.get("message") or "正在执行仿真测试"
+            update.get("message") or tr('正在执行仿真测试')
         )
         self.simulation_progress_panel.setVisible(True)
         self.simulation_progress_bar.setValue(percent)
@@ -9504,9 +9432,9 @@ class _IndustrialWorkbenchUI(QMainWindow):
         step_count = update.get("step_count")
         location = []
         if test_index and test_count:
-            location.append(f"测试 {test_index}/{test_count}")
+            location.append(tr('测试 {v0}/{v1}', v0=test_index, v1=test_count))
         if step_index and step_count:
-            location.append(f"步骤 {step_index}/{step_count}")
+            location.append(tr('步骤 {v0}/{v1}', v0=step_index, v1=step_count))
         current = " · ".join(location + [message]) if location else message
         self.simulation_progress_current.setText(current)
 
@@ -9597,7 +9525,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
                 or ((workflow or {}).get("execution") or {}).get("result", {}).get("error")
                 or report_error
             )
-            QMessageBox.warning(self, "仿真测试结果", fallback)
+            QMessageBox.warning(self, tr('仿真测试结果'), fallback)
             return ""
 
     def _simulator_test_finished_impl(self, task_id, workflow):
@@ -9606,8 +9534,8 @@ class _IndustrialWorkbenchUI(QMainWindow):
         self.simulation_progress_panel.setVisible(True)
         self.simulation_progress_bar.setValue(100)
         self.simulation_progress_percent.setText("100%")
-        self.simulator_test_button.setText("仿真测试")
-        self._set_busy(False, "仿真测试已结束")
+        self.simulator_test_button.setText(tr('仿真测试'))
+        self._set_busy(False, tr('仿真测试已结束'))
         version = (
             self.store.get_version(self.current_project_id, self.current_version_id)
             if self.current_project_id and self.current_version_id
@@ -9622,10 +9550,7 @@ class _IndustrialWorkbenchUI(QMainWindow):
         record = execution.get("record") or {}
         counts = result.get("counts") or {}
         details = (
-            f"\n\n通过：{counts.get('passed', 0)}\n"
-            f"失败：{counts.get('failed', 0)}\n"
-            f"错误：{counts.get('error', 0)}\n"
-            f"未执行：{result.get('not_executed_count', 0)}"
+            tr('\n\n通过：{v0}\n失败：{v1}\n错误：{v2}\n未执行：{v3}', v0=counts.get('passed', 0), v1=counts.get('failed', 0), v2=counts.get('error', 0), v3=result.get('not_executed_count', 0))
         )
         scan_rows = [
             item.get("scan_monitor") or {}
@@ -9652,20 +9577,19 @@ class _IndustrialWorkbenchUI(QMainWindow):
             ]
             if current_values or minimum_values or maximum_values:
                 current_text = (
-                    f"{current_values[-1]:g} ms" if current_values else "无数据"
+                    f"{current_values[-1]:g} ms" if current_values else tr('无数据')
                 )
                 minimum_text = (
-                    f"{min(minimum_values):g} ms" if minimum_values else "无数据"
+                    f"{min(minimum_values):g} ms" if minimum_values else tr('无数据')
                 )
                 maximum_text = (
-                    f"{max(maximum_values):g} ms" if maximum_values else "无数据"
+                    f"{max(maximum_values):g} ms" if maximum_values else tr('无数据')
                 )
                 details += (
-                    "\n扫描时间："
-                    f"当前 {current_text} / 最小 {minimum_text} / 最大 {maximum_text}"
+                    tr('\n扫描时间：当前 {v0} / 最小 {v1} / 最大 {v2}', v0=current_text, v1=minimum_text, v2=maximum_text)
                 )
         status_message = naturalize_display_text(
-            workflow.get("message") or "仿真测试已结束。"
+            workflow.get("message") or tr('仿真测试已结束。')
         )
         message = status_message + details
         self.simulation_progress_current.setText(message)
@@ -9697,19 +9621,19 @@ class _IndustrialWorkbenchUI(QMainWindow):
             self._active_simulator_test_task_id = None
         self.simulation_progress_panel.setVisible(True)
         display_error = naturalize_display_text(error)
-        self.simulation_progress_current.setText(f"仿真测试未完成：{display_error}")
+        self.simulation_progress_current.setText(tr('仿真测试未完成：{v0}', v0=display_error))
         self.simulation_progress_log.appendPlainText(f"✕ {display_error}")
-        self.simulator_test_button.setText("仿真测试")
-        self._set_busy(False, "仿真测试执行失败")
+        self.simulator_test_button.setText(tr('仿真测试'))
+        self._set_busy(False, tr('仿真测试执行失败'))
         self.simulator_test_button.setEnabled(bool(self.current_version_id))
         self._show_simulator_report(
             {
                 "status": "error",
-                "message": "仿真测试执行失败。",
+                "message": tr('仿真测试执行失败。'),
                 "execution": {
                     "result": {
                         "status": "error",
-                        "name": "当前程序仿真测试",
+                        "name": tr('当前程序仿真测试'),
                         "counts": {
                             "passed": 0,
                             "failed": 0,

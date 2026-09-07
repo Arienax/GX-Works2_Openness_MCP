@@ -1,3 +1,4 @@
+from i18n import on_language_changed, runtime_text, tr
 import copy
 
 from approach_contracts import format_contract_summary
@@ -53,11 +54,11 @@ class MessageBubble(QFrame):
         layout.setContentsMargins(12, 9, 12, 9)
         layout.setSpacing(5)
 
-        title_text = "你" if role == "user" else "PLC AI"
+        title_text = tr('你') if role == "user" else "PLC AI"
         if kind == "system":
-            title_text = "系统"
+            title_text = tr('系统')
         elif kind == "agent":
-            title_text = "PLC AI · 工具"
+            title_text = tr('PLC AI · 工具')
         title = QLabel(title_text)
         title.setObjectName("MessageAuthor")
         body = QLabel(naturalize_display_text(content))
@@ -75,11 +76,11 @@ class MessageBubble(QFrame):
         ]
         if image_attachments:
             names = [
-                str(item.get("filename") or "图片")
+                str(item.get("filename") or tr('图片'))
                 for item in image_attachments
             ]
             attachment_label = QLabel(
-                f"已附加 {len(names)} 张图片：" + "、".join(names)
+                tr('已附加 {v0} 张图片：', v0=len(names)) + "、".join(names)
             )
             attachment_label.setObjectName("MessageMeta")
             attachment_label.setWordWrap(True)
@@ -87,7 +88,7 @@ class MessageBubble(QFrame):
             layout.addWidget(attachment_label)
         version_id = metadata.get("version_id")
         if version_id:
-            version = QLabel(f"生成{version_display_name(version_id)}")
+            version = QLabel(tr('生成{v0}', v0=version_display_name(version_id)))
             version.setObjectName("MessageMeta")
             layout.addWidget(version)
 
@@ -107,10 +108,10 @@ class DebugReportCard(QFrame):
         layout.setSpacing(8)
 
         header = QHBoxLayout()
-        title = QLabel("调试报告")
+        title = QLabel(tr('调试报告'))
         title.setObjectName("DebugTitle")
         base_version = self.report.get("base_version_id") or "-"
-        badge = QLabel(f"基于{version_display_name(base_version)}")
+        badge = QLabel(tr('基于{v0}', v0=version_display_name(base_version)))
         badge.setObjectName("DebugBadge")
         header.addWidget(title)
         header.addWidget(badge)
@@ -127,25 +128,25 @@ class DebugReportCard(QFrame):
         actions.addStretch()
 
         if self.report.get("needs_fix"):
-            copy_button = QPushButton("复制修复要求到输入框")
+            copy_button = QPushButton(tr('复制修复要求到输入框'))
             copy_button.setObjectName("SecondaryButton")
-            set_codicon(copy_button, "copy", "复制修复要求到输入框", 10)
+            set_codicon(copy_button, "copy", tr('复制修复要求到输入框'), 10)
             copy_button.clicked.connect(
                 lambda: self.copy_fix_requested.emit(
                     self.report.get("fix_instruction", "")
                 )
             )
             actions.addWidget(copy_button)
-            fix_button = QPushButton("生成修复版本")
+            fix_button = QPushButton(tr('生成修复版本'))
             fix_button.setObjectName("PrimaryButton")
-            set_codicon(fix_button, "tools", "生成修复版本", 10)
+            set_codicon(fix_button, "tools", tr('生成修复版本'), 10)
             is_current = (
                 not latest_version_id
                 or self.report.get("base_version_id") == latest_version_id
             )
             fix_button.setEnabled(is_current)
             if not is_current:
-                fix_button.setToolTip("该报告基于旧版本，请重新调试当前版本")
+                fix_button.setToolTip(tr('该报告基于旧版本，请重新调试当前版本'))
             fix_button.clicked.connect(lambda: self.fix_requested.emit(self.report))
             actions.addWidget(fix_button)
         layout.addLayout(actions)
@@ -206,21 +207,21 @@ class DebugReportCard(QFrame):
         """)
 
     def _body_text(self):
-        parts = [self.report.get("summary", "调试分析完成")]
+        parts = [self.report.get("summary", tr('调试分析完成'))]
         causes = self.report.get("possible_causes") or []
         if causes:
-            parts.append("\n可能原因：")
+            parts.append(tr('\n可能原因：'))
             parts.extend(f"- {item}" for item in causes)
         rungs = self.report.get("related_rungs") or []
         if rungs:
-            parts.append("\n涉及梯级：" + ", ".join(map(str, rungs)))
+            parts.append(tr('\n涉及梯级：') + ", ".join(map(str, rungs)))
         changes = self.report.get("recommended_changes") or []
         if changes:
-            parts.append("\n建议修改：")
+            parts.append(tr('\n建议修改：'))
             parts.extend(f"- {item}" for item in changes)
         local = self.report.get("local_findings") or []
         if local:
-            parts.append("\n本地评审提示：")
+            parts.append(tr('\n本地评审提示：'))
             for item in local[:6]:
                 if isinstance(item, dict):
                     text = item.get("message") or item.get("suggestion") or str(item)
@@ -228,7 +229,7 @@ class DebugReportCard(QFrame):
                     text = str(item)
                 parts.append(f"- {text}")
         if self.report.get("needs_fix") and self.report.get("fix_instruction"):
-            parts.append("\n修复要求：")
+            parts.append(tr('\n修复要求：'))
             parts.append(self.report["fix_instruction"])
         return naturalize_display_text(
             "\n".join(str(part) for part in parts if str(part).strip())
@@ -287,11 +288,11 @@ class RequirementReviewCard(QFrame):
         layout.setSpacing(10)
 
         header = QHBoxLayout()
-        title = QLabel("生成前规格确认")
+        title = QLabel(tr('生成前规格确认'))
         title.setObjectName("ReviewTitle")
-        badge = QLabel("差异确认" if self.is_delta else "首次确认")
+        badge = QLabel(tr('差异确认') if self.is_delta else tr('首次确认'))
         badge.setObjectName("ReviewBadge")
-        self.review_status = QLabel("请检查规格")
+        self.review_status = QLabel(tr('请检查规格'))
         self.review_status.setObjectName("ReviewStatus")
         header.addWidget(title)
         header.addWidget(badge)
@@ -301,7 +302,7 @@ class RequirementReviewCard(QFrame):
 
         summary = QLabel(
             naturalize_display_text(
-                self.draft.get("summary") or "未返回需求摘要"
+                self.draft.get("summary") or tr('未返回需求摘要')
             )
         )
         summary.setObjectName("ReviewSummary")
@@ -324,12 +325,12 @@ class RequirementReviewCard(QFrame):
         )
         layout.addWidget(self.validation_details)
 
-        notes_group = QGroupBox("本轮补充说明")
+        notes_group = QGroupBox(tr('本轮补充说明'))
         notes_layout = QVBoxLayout(notes_group)
         self.notes_edit = QTextEdit()
         self.notes_edit.setMaximumHeight(72)
         self.notes_edit.setPlaceholderText(
-            "补充必须保持的逻辑、地址、时序或本轮修改边界"
+            tr('补充必须保持的逻辑、地址、时序或本轮修改边界')
         )
         self.notes_edit.setPlainText(self.draft.get("user_notes", ""))
         self.notes_edit.textChanged.connect(self._on_draft_text_changed)
@@ -337,12 +338,12 @@ class RequirementReviewCard(QFrame):
         layout.addWidget(notes_group)
 
         actions = QHBoxLayout()
-        revise = QPushButton("返回修改")
+        revise = QPushButton(tr('返回修改'))
         revise.setObjectName("SecondaryButton")
-        self.confirm_button = QPushButton("确认并生成")
+        self.confirm_button = QPushButton(tr('确认并生成'))
         self.confirm_button.setObjectName("PrimaryButton")
-        set_codicon(revise, "edit", "返回修改", 10)
-        set_codicon(self.confirm_button, "play", "确认并生成", 10)
+        set_codicon(revise, "edit", tr('返回修改'), 10)
+        set_codicon(self.confirm_button, "play", tr('确认并生成'), 10)
         revise.clicked.connect(self._request_revision)
         self.confirm_button.clicked.connect(self._emit_confirmed)
         actions.addStretch()
@@ -353,9 +354,13 @@ class RequirementReviewCard(QFrame):
         self._refresh_raw_preview()
         self._validate_review()
         self.apply_theme(self._theme)
+        self.destroyed.connect(on_language_changed(self._language_changed))
+
+    def _language_changed(self, _language):
+        self._validate_review()
 
     def _add_delta_summary(self, layout):
-        changes_group = QGroupBox("本轮变更")
+        changes_group = QGroupBox(tr('本轮变更'))
         changes_group.setObjectName("CurrentChangesGroup")
         changes_layout = QVBoxLayout(changes_group)
         self.change_summary_label = QLabel()
@@ -367,7 +372,7 @@ class RequirementReviewCard(QFrame):
         changes_layout.addWidget(self.change_summary_label)
         layout.addWidget(changes_group)
 
-        self.carried_group = QGroupBox("沿用项（点击展开）")
+        self.carried_group = QGroupBox(tr('沿用项（点击展开）'))
         self.carried_group.setObjectName("CarriedItemsGroup")
         self.carried_group.setCheckable(True)
         self.carried_group.setChecked(False)
@@ -407,11 +412,10 @@ class RequirementReviewCard(QFrame):
         current_approach_display = naturalize_display_text(current_approach)
         if previous_approach != current_approach and current_approach:
             changes.append(
-                f"实现方案：{previous_approach_display or '未设置'} → "
-                f"{current_approach_display}"
+                tr('实现方案：{v0} → {v1}', v0=previous_approach_display or tr('未设置'), v1=current_approach_display)
             )
         elif current_approach:
-            carried.append(f"实现方案：{current_approach_display}")
+            carried.append(tr('实现方案：{v0}', v0=current_approach_display))
 
         previous_parameters = self._row_map(previous.get("parameters"), "name")
         current_parameters = self._row_map(current.get("parameters"), "name")
@@ -420,16 +424,15 @@ class RequirementReviewCard(QFrame):
             value = str(parameter.get("value", ""))
             display_name = naturalize_display_text(name)
             if before is None:
-                changes.append(f"新增参数：{display_name} = {value or '未填写'}")
+                changes.append(tr('新增参数：{v0} = {v1}', v0=display_name, v1=value or tr('未填写')))
             elif str(before.get("value", "")) != value:
                 changes.append(
-                    f"参数 {display_name}："
-                    f"{before.get('value', '') or '未填写'} → {value or '未填写'}"
+                    tr('参数 {v0}：{v1} → {v2}', v0=display_name, v1=before.get('value', '') or tr('未填写'), v2=value or tr('未填写'))
                 )
             else:
-                carried.append(f"参数：{display_name} = {value or '未填写'}")
+                carried.append(tr('参数：{v0} = {v1}', v0=display_name, v1=value or tr('未填写')))
         for name in previous_parameters.keys() - current_parameters.keys():
-            changes.append(f"移除参数：{naturalize_display_text(name)}")
+            changes.append(tr('移除参数：{v0}', v0=naturalize_display_text(name)))
 
         previous_io = self._row_map(previous.get("io_table"), "address")
         current_io = self._row_map(current.get("io_table"), "address")
@@ -438,24 +441,22 @@ class RequirementReviewCard(QFrame):
             label = str(item.get("label", ""))
             display_label = naturalize_display_text(label)
             if before is None:
-                changes.append(f"新增 I/O：{address} {display_label}".rstrip())
+                changes.append(tr('新增 I/O：{v0} {v1}', v0=address, v1=display_label).rstrip())
             elif str(before.get("label", "")) != label or str(before.get("kind", "")) != str(item.get("kind", "")):
                 changes.append(
-                    f"修改 I/O：{address}，"
-                    f"{naturalize_display_text(before.get('label', '')) or '无说明'}"
-                    f" → {display_label or '无说明'}"
+                    tr('修改 I/O：{v0}，{v1} → {v2}', v0=address, v1=naturalize_display_text(before.get('label', '')) or tr('无说明'), v2=display_label or tr('无说明'))
                 )
             else:
                 carried.append(f"I/O：{address} {display_label}".rstrip())
         for address in previous_io.keys() - current_io.keys():
-            changes.append(f"移除 I/O：{address}")
+            changes.append(tr('移除 I/O：{v0}', v0=address))
 
         previous_notes = str(previous.get("user_notes", "")).strip()
         current_notes = str(current.get("user_notes", "")).strip()
         if previous_notes != current_notes:
-            changes.append("补充说明已更新")
+            changes.append(tr('补充说明已更新'))
         elif current_notes:
-            carried.append("补充说明保持不变")
+            carried.append(tr('补充说明保持不变'))
         return changes, carried
 
     def _refresh_delta_summary(self):
@@ -463,9 +464,9 @@ class RequirementReviewCard(QFrame):
             return
         changes, carried = self._delta_summary_lines()
         if not changes:
-            changes = ["未检测到结构化字段变化；本轮需求摘要仍需人工确认。"]
+            changes = [tr('未检测到结构化字段变化；本轮需求摘要仍需人工确认。')]
         if not carried:
-            carried = ["没有可列出的沿用项。"]
+            carried = [tr('没有可列出的沿用项。')]
         self.change_summary_label.setText("\n".join(f"• {item}" for item in changes))
         self.carried_summary_label.setText("\n".join(f"• {item}" for item in carried))
 
@@ -610,16 +611,16 @@ class RequirementReviewCard(QFrame):
         approaches = self.draft.get("approaches", [])
         if not approaches and not self.draft.get("selected_approach"):
             return
-        group = QGroupBox("实现方案")
+        group = QGroupBox(tr('实现方案'))
         group_layout = QVBoxLayout(group)
         self.approach_group = QButtonGroup(self)
         if not approaches:
             approaches = [self.draft.get("selected_approach", {})]
         selected_name = (self.draft.get("selected_approach") or {}).get("name", "")
         for index, approach in enumerate(approaches):
-            name = approach.get("name", f"方案 {index + 1}")
+            name = approach.get("name", tr('方案 {v0}', v0=index + 1))
             display_name = preferred_display_name(
-                {"name": name}, kind="方案", index=index + 1
+                {"name": name}, kind=tr('方案'), index=index + 1
             )
             radio = QRadioButton(display_name)
             radio.setToolTip(display_name)
@@ -633,22 +634,21 @@ class RequirementReviewCard(QFrame):
             group_layout.addWidget(radio)
             details = []
             for key, label in (
-                ("description", "说明"),
-                ("pros", "优点"),
-                ("cons", "限制"),
-                ("generation_guide", "生成要点"),
+                ("description", tr('说明')),
+                ("pros", tr('优点')),
+                ("cons", tr('限制')),
+                ("generation_guide", tr('生成要点')),
             ):
                 value = str(approach.get(key, "")).strip()
                 if value:
-                    details.append(f"{label}: {naturalize_display_text(value)}")
-            contract_summary = format_contract_summary(approach)
+                    details.append(tr("{label}: {value}", label=label, value=naturalize_display_text(value)))
+            contract_summary = format_contract_summary(approach, localized=True)
             if contract_summary:
                 details.append(
-                    f"生成硬约束: "
-                    f"{naturalize_display_text(contract_summary)}"
+                    tr('生成硬约束: {v0}', v0=contract_summary)
                 )
             if details:
-                description_label = QLabel("\n".join(details))
+                description_label = QLabel(tr("\n").join(details))
                 description_label.setObjectName("ApproachDescription")
                 description_label.setWordWrap(True)
                 description_label.setTextInteractionFlags(
@@ -659,17 +659,17 @@ class RequirementReviewCard(QFrame):
 
     @staticmethod
     def _item(text="", editable=True):
-        item = QTableWidgetItem(str(text))
+        item = QTableWidgetItem(text if isinstance(text, str) else str(text))
         if not editable:
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         return item
 
     def _add_parameters_table(self, layout):
-        group = QGroupBox("关键参数")
+        group = QGroupBox(tr('关键参数'))
         group_layout = QVBoxLayout(group)
         self.parameter_table = QTableWidget(0, 5)
         self.parameter_table.setHorizontalHeaderLabels(
-            ["参数", "当前值", "来源", "必填", "备注"]
+            [tr('参数'), tr('当前值'), tr('来源'), tr('必填'), tr('备注')]
         )
         header = self.parameter_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -698,17 +698,17 @@ class RequirementReviewCard(QFrame):
             source_item = self._item(source_display_name(raw_source), False)
             source_item.setData(Qt.ItemDataRole.UserRole, raw_source)
             name_item.setToolTip(name_item.text())
-            value_item.setToolTip("可双击修改；有候选值时也可从下拉列表选择")
+            value_item.setToolTip(tr('可双击修改；有候选值时也可从下拉列表选择'))
             source_item.setToolTip(source_item.text())
             self.parameter_table.setItem(row, 0, name_item)
             self.parameter_table.setItem(row, 1, value_item)
             self.parameter_table.setItem(row, 2, source_item)
-            required_text = "条件" if parameter.get("required_when") else (
-                "是" if parameter.get("required") else "否"
+            required_text = tr('条件') if parameter.get("required_when") else (
+                tr('是') if parameter.get("required") else tr('否')
             )
             required_item = self._item(required_text, False)
             if parameter.get("required_when"):
-                required_item.setToolTip("仅在相关控制方式被选择时必填")
+                required_item.setToolTip(tr('仅在相关控制方式被选择时必填'))
             self.parameter_table.setItem(row, 3, required_item)
             raw_note = str(parameter.get("note") or "")
             note_item = self._item(
@@ -797,10 +797,10 @@ class RequirementReviewCard(QFrame):
             self._validate_review()
 
     def _add_io_table(self, layout):
-        group = QGroupBox("I/O 分配")
+        group = QGroupBox(tr('I/O 分配'))
         group_layout = QVBoxLayout(group)
         self.io_table_widget = QTableWidget(0, 4)
-        self.io_table_widget.setHorizontalHeaderLabels(["类别", "地址", "说明", "来源"])
+        self.io_table_widget.setHorizontalHeaderLabels([tr('类别'), tr('地址'), tr('说明'), tr('来源')])
         self.io_table_widget.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
@@ -816,9 +816,9 @@ class RequirementReviewCard(QFrame):
         group_layout.addWidget(self.io_table_widget)
 
         buttons = QHBoxLayout()
-        add_button = QPushButton("新增 I/O")
+        add_button = QPushButton(tr('新增 I/O'))
         add_button.setObjectName("SecondaryButton")
-        delete_button = QPushButton("删除选中")
+        delete_button = QPushButton(tr('删除选中'))
         delete_button.setObjectName("SecondaryButton")
         add_button.clicked.connect(lambda: self._append_io_row({"source": "user"}))
         delete_button.clicked.connect(self._delete_selected_io_rows)
@@ -831,7 +831,7 @@ class RequirementReviewCard(QFrame):
         self.raw_preview.setReadOnly(True)
         self.raw_preview.setMaximumHeight(76)
         self.raw_preview.setPlaceholderText(
-            "I/O 分配预览（内部绑定保持不变）"
+            tr('I/O 分配预览（内部绑定保持不变）')
         )
         group_layout.addWidget(self.raw_preview)
         layout.addWidget(group)
@@ -902,10 +902,10 @@ class RequirementReviewCard(QFrame):
                         self._updating_tables = False
             elif item.column() == 0:
                 normalized = item.text().strip().upper()
-                if normalized and normalized != "特殊" and normalized not in {
+                if normalized and normalized != tr('特殊') and normalized not in {
                     "X", "Y", "M", "T", "C", "D", "S"
                 }:
-                    normalized = "特殊"
+                    normalized = tr('特殊')
                 if normalized != item.text():
                     self._updating_tables = True
                     try:
@@ -934,7 +934,6 @@ class RequirementReviewCard(QFrame):
             if not name:
                 continue
             base = base_parameters[row] if row < len(base_parameters) else {}
-            required_text = self._table_text(self.parameter_table, row, 3)
             parameter = {
                 "id": str(base.get("id", "")).strip(),
                 "name": name,
@@ -942,11 +941,9 @@ class RequirementReviewCard(QFrame):
                     self.parameter_table, row, 1
                 ),
                 "source": self._table_value(self.parameter_table, row, 2),
-                "required": (
-                    bool(base.get("required", False))
-                    if required_text == "条件"
-                    else required_text == "是"
-                ),
+                # The required column is read-only presentation, not a boolean
+                # encoded in translated Yes/No text.
+                "required": bool(base.get("required", False)),
                 "note": self._table_value(self.parameter_table, row, 4),
             }
             if isinstance(base.get("required_when"), dict):
@@ -1033,9 +1030,9 @@ class RequirementReviewCard(QFrame):
     def _validation_message(issue):
         if isinstance(issue, dict):
             return naturalize_display_text(
-                issue.get("message") or issue.get("code") or "未说明的问题"
+                runtime_text(issue.get("message") or issue.get("code") or tr('未说明的问题'))
             )
-        return naturalize_display_text(issue)
+        return naturalize_display_text(runtime_text(issue))
 
     def _mark_validation_issue(self, issue, state):
         if not isinstance(issue, dict):
@@ -1082,19 +1079,19 @@ class RequirementReviewCard(QFrame):
         )
         self.confirm_button.setEnabled(not errors)
         if errors:
-            status = f"{len(errors)} 项错误，无法确认"
+            status = tr('{v0} 项错误，无法确认', v0=len(errors))
         elif warnings:
-            status = f"{len(warnings)} 项提示，可继续"
+            status = tr('{v0} 项提示，可继续', v0=len(warnings))
         else:
-            status = "规格可确认"
+            status = tr('规格可确认')
         self.review_status.setText(status)
 
         details = []
         if errors:
-            details.append("错误：")
+            details.append(tr('错误：'))
             details.extend(f"• {self._validation_message(issue)}" for issue in errors)
         if warnings:
-            details.append("提示：")
+            details.append(tr('提示：'))
             details.extend(f"• {self._validation_message(issue)}" for issue in warnings)
         self.validation_details.setText("\n".join(details))
         self.validation_details.setVisible(bool(details))
@@ -1102,21 +1099,19 @@ class RequirementReviewCard(QFrame):
     def _revision_text(self):
         summary = self.draft.get("summary", "")
         return (
-            f"{self.original_request}\n\n"
-            f"请根据以下分析继续修改需求：\n{summary}"
+            tr('{v0}\n\n请根据以下分析继续修改需求：\n{v1}', v0=self.original_request, v1=summary)
         ).strip()
 
     @staticmethod
     def _build_locked_summary(spec):
         approach = spec.get("selected_approach") or {}
         approach_name = naturalize_display_text(
-            approach.get("name", "沿用已确认方案")
+            approach.get("name", tr('沿用已确认方案'))
         )
         io_count = len(spec.get("io_table") or [])
         parameter_count = len(spec.get("parameters") or [])
         return (
-            f"已锁定：{approach_name}；I/O {io_count} 项，关键参数 {parameter_count} 项。"
-            "未在本卡中明确修改的内容将继续沿用。"
+            tr('已锁定：{v0}；I/O {v1} 项，关键参数 {v2} 项。未在本卡中明确修改的内容将继续沿用。', v0=approach_name, v1=io_count, v2=parameter_count)
         )
 
     def _emit_confirmed(self):

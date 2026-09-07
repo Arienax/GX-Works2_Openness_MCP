@@ -14,7 +14,9 @@ from display_names import (
     source_display_name,
     version_display_name,
 )
-from workbench_widgets import RequirementReviewCard
+# These assertions intentionally exercise the detailed legacy table editor,
+# which the new review workbench now embeds rather than exposing on its facade.
+from workbench_widgets import _LegacyRequirementReviewCard as RequirementReviewCard
 
 
 def test_function_style_identifier_is_presented_as_a_business_label():

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Mapping, Optional, Sequence
+from i18n import get_language, language_context, tr, translate
 
 
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
@@ -366,7 +367,7 @@ def _clean(value: Any) -> str:
 
 
 def _fallback(kind: str, index: Optional[int]) -> str:
-    label = _clean(kind) or "项目"
+    label = str(tr(_clean(kind) or "项目"))
     return f"{label} {int(index)}" if index is not None else label
 
 
@@ -421,6 +422,23 @@ def naturalize_identifier(
         return _fallback(kind, index)
     if _PLC_DEVICE_RE.fullmatch(text):
         return text.upper()
+    if get_language() != "zh-CN":
+        if _OPAQUE_ID_RE.fullmatch(text) or _UUID_OR_HASH_RE.fullmatch(text):
+            return _fallback(kind, index)
+        version_match = re.fullmatch(r"v0*(\d+)", text, re.I)
+        if version_match:
+            return str(tr("版本")) + " " + str(int(version_match.group(1)))
+        lowered = text.casefold().replace("-", "_")
+        if lowered in _EXACT_LABELS:
+            return str(tr(_EXACT_LABELS[lowered]))
+        if _CJK_RE.search(text) or re.search(r"[\u3040-\u30ff]", text):
+            return text
+        if not looks_like_internal_identifier(text):
+            return text
+        pieces = _split_identifier(text)
+        if get_language() == "en":
+            return " ".join(pieces).capitalize()
+        return " ".join(str(tr(_TOKEN_LABELS.get(piece.casefold(), piece))) for piece in pieces)
     version = re.fullmatch(r"v0*(\d+)", text, re.IGNORECASE)
     if version:
         return f"版本 {int(version.group(1))}"
@@ -536,20 +554,21 @@ def naturalize_display_text(value: Any) -> str:
     )
     rendered = re.sub(
         r"pydantic_core(?:\.pydantic_core)?",
-        "API 运行组件",
+        str(tr("API 运行组件")),
         rendered,
         flags=re.IGNORECASE,
     )
     for field, label in _DISPLAY_FIELD_LABELS.items():
         rendered = re.sub(
             rf"(?P<quote>[\"'])?{re.escape(field)}(?P=quote)\s*:",
-            f"{label}：",
+            str(tr(label)) + (": " if get_language() == "en" else "："),
             rendered,
         )
     rendered = _INLINE_IDENTIFIER_RE.sub(replace, rendered)
-    rendered = rendered.replace("assertion:", "状态检查：")
-    rendered = rendered.replace("invariant:", "运行约束：")
-    rendered = rendered.replace("network:", "程序段：")
+    colon = ": " if get_language() == "en" else "："
+    rendered = rendered.replace("assertion:", str(tr("状态检查")) + colon)
+    rendered = rendered.replace("invariant:", str(tr("运行约束")) + colon)
+    rendered = rendered.replace("network:", str(tr("程序段")) + colon)
     return leading + rendered + trailing
 
 
@@ -572,15 +591,15 @@ def _naturalize_json_path(path: str) -> str:
                 and tokens[cursor + 1][1]
             ):
                 rendered.append(
-                    f"{collection_label} {int(tokens[cursor + 1][1]) + 1}"
+                    f"{tr(collection_label)} {int(tokens[cursor + 1][1]) + 1}"
                 )
                 cursor += 2
                 continue
-            rendered.append(_DISPLAY_FIELD_LABELS.get(field, field))
+            rendered.append(str(tr(_DISPLAY_FIELD_LABELS.get(field, field))))
         elif index:
             rendered.append(str(int(index) + 1))
         cursor += 1
-    return " / ".join(rendered) or "程序内部位置"
+    return " / ".join(rendered) or str(tr("程序内部位置"))
 
 
 def _trailing_json_string_start(text: str) -> Optional[int]:
@@ -649,7 +668,7 @@ def preferred_display_name(
 def version_display_name(value: Any) -> str:
     text = _clean(value)
     if not text or text == "-":
-        return "未指定版本"
+        return str(tr("未指定版本"))
     return naturalize_identifier(text, kind="版本")
 
 
@@ -657,17 +676,18 @@ def source_display_name(value: Any) -> str:
     """Return a readable origin label while callers retain the raw enum."""
 
     text = _clean(value)
-    return _SOURCE_LABELS.get(
+    return str(tr(_SOURCE_LABELS.get(
         text.casefold(),
         naturalize_identifier(text, kind="系统生成") if text else "未标明来源",
-    )
+    )))
 
 
 class DisplayTextStream:
     """Naturalize arbitrarily split stream chunks without leaking partial IDs."""
 
-    def __init__(self) -> None:
+    def __init__(self, language=None) -> None:
         self._pending = ""
+        self.language = language or get_language()
 
     def feed(self, value: Any) -> str:
         combined = self._pending + str(value or "")
@@ -682,12 +702,14 @@ class DisplayTextStream:
         if trailing_identifier:
             self._pending = trailing_identifier.group(0)
             combined = combined[: trailing_identifier.start()]
-        return naturalize_display_text(combined) if combined else ""
+        with language_context(self.language):
+            return naturalize_display_text(combined) if combined else ""
 
     def flush(self) -> str:
         pending = self._pending
         self._pending = ""
-        return naturalize_display_text(pending) if pending else ""
+        with language_context(self.language):
+            return naturalize_display_text(pending) if pending else ""
 
 
 __all__ = [

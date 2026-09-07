@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Iterable, Iterator, Mapping, Optional, Protocol, Sequence, Tuple, Union
 
 from config_manager import get_api_key, get_model_profile, load_full_config
+from i18n import get_language, response_language_instruction
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,7 @@ class ModelRequest:
     stream: bool = True
     timeout: Optional[float] = None
     max_retries: Optional[int] = None
+    response_language: str = field(default_factory=lambda: get_language())
 
     @classmethod
     def from_messages(
@@ -128,6 +130,21 @@ class ModelRequest:
 class CollectedResponse:
     message: AssistantMessage
     usage: Optional[Usage] = None
+
+
+def with_response_language(request: ModelRequest) -> ModelRequest:
+    """Apply the application preference to every model path without mutating history."""
+    instruction = response_language_instruction(request.response_language)
+    messages = list(request.messages)
+    for index, message in enumerate(messages):
+        if isinstance(message, SystemMessage):
+            content = str(message.content or "")
+            if instruction not in content:
+                messages[index] = replace(message, content=content + "\n\n" + instruction)
+            break
+    else:
+        messages.insert(0, SystemMessage(instruction))
+    return replace(request, messages=tuple(messages))
 
 
 class ModelProviderError(RuntimeError):
@@ -352,6 +369,7 @@ class OpenAICompatibleProvider:
         )
 
     def _request_params(self, request: ModelRequest) -> Dict[str, Any]:
+        request = with_response_language(request)
         params = _deep_merge(
             self.profile.get("generationDefaults") or {},
             request.options or {},
@@ -521,6 +539,7 @@ def collect_response(
     fallback_to_non_stream: bool = False,
     on_fallback: Optional[Callable[[ModelProviderError], None]] = None,
 ) -> CollectedResponse:
+    request = with_response_language(request)
     def consume(current: ModelRequest) -> CollectedResponse:
         reasoning = []
         content = []

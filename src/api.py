@@ -3,6 +3,7 @@ import json
 import re
 import sys
 import warnings
+from i18n import tr
 from approach_contracts import normalize_approach
 from draw import AdvancedSVGLadder
 from config_manager import get_api_key, get_model_profile, load_full_config
@@ -158,7 +159,7 @@ def load_config():
     base_url = get_model_profile(config).get("baseUrl", "").strip()
 
     if not api_key:
-        raise ValueError("未配置 API Key，请打开“API 设置”完成配置。")
+        raise ValueError("未配置 API Key，请打开“设置”中的 API 设置完成配置。")
 
     return api_key, base_url
 
@@ -1828,7 +1829,7 @@ Use the provided current ladder JSON as read-only evidence.
 
 Return pure JSON only, with this exact shape:
 {
-  "summary": "short Chinese summary",
+  "summary": "short summary in the application response language",
   "possible_causes": ["cause 1", "cause 2"],
   "related_rungs": [1, 2],
   "recommended_changes": ["change 1", "change 2"],
@@ -2048,7 +2049,7 @@ or debugging-case blocks.
 Return pure JSON only:
 {
   "schema_version": 1,
-  "root_cause": "concise Chinese root cause",
+  "root_cause": "concise root cause in the application response language",
   "confidence": 0.0,
   "affected_networks": ["N0001"],
   "evidence_refs": ["assertion:test:step:Y0", "network:N0001"],
@@ -2126,7 +2127,7 @@ def _call_debug_evidence_json(
             for callback in (on_reasoning_chunk, on_content_chunk, on_progress)
         )
         if wants_stream and on_progress:
-            on_progress("AI 正在生成仿真测试方案（流式）")
+            on_progress(str(tr("AI 正在生成仿真测试方案（流式）")))
         response = _request_model(
             messages,
             model_name=selected_model,
@@ -2139,7 +2140,7 @@ def _call_debug_evidence_json(
             fallback_to_non_stream=wants_stream,
             on_fallback=(
                 (lambda error: on_progress(
-                    f"流式显示不可用，正在切换普通模式：{error}"
+                    str(tr("流式显示不可用，正在切换普通模式：{error}", error=error))
                 ))
                 if on_progress
                 else None
@@ -2150,7 +2151,7 @@ def _call_debug_evidence_json(
             raise RuntimeError("模型响应没有返回正文")
 
         if on_progress:
-            on_progress("正在解析模型输出：清理并校验 JSON 结构")
+            on_progress(str(tr("正在解析模型输出：清理并校验 JSON 结构")))
         parsed = json.loads(_clean_json_response(raw_content))
         if not isinstance(parsed, dict):
             raise ValueError("response must be a JSON object")
@@ -2231,8 +2232,8 @@ Return pure JSON only in this shape:
 }
 
 Rules:
-- Keep JSON keys and enum values exactly as shown in English. Use concise
-  Simplified Chinese for every natural-language field and any visible planning
+- Keep JSON keys and enum values exactly as shown in English. Use the application
+  response language for every natural-language field and any visible planning
   summary; keep PLC addresses and instruction names unchanged.
 - Use only addresses present in context.devices or context.io_map.
 - Stimulus writes may target only declared X inputs or declared non-special
@@ -2298,7 +2299,7 @@ Return pure JSON only:
 {
   "binding": {"project_id":"", "version_id":"", "revision":1,
               "ir_sha256":"copy context.binding exactly"},
-  "summary": "Chinese review summary",
+  "summary": "review summary in the application response language",
   "findings": [{
     "severity":"warning|info", "category":"stable_snake_case",
     "title":"short title", "message":"evidence-bound observation",
@@ -2425,13 +2426,13 @@ ladder JSON.
 
 Return pure JSON only:
 {
-  "summary": "Chinese summary",
+  "summary": "summary in the application response language",
   "findings": [
     {
       "finding_id": "reuse the local finding_id when this is the same issue",
       "severity": "error|warning|info",
       "category": "stable_snake_case_category",
-      "title": "short Chinese title",
+      "title": "short title in the application response language",
       "message": "what is wrong or uncertain",
       "evidence": [
         {"rung_id": 1, "json_path": "$.rungs[0]", "address": "Y0"}

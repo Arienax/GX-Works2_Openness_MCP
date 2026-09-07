@@ -13,6 +13,7 @@ from credential_store import (
     write_api_key,
 )
 from resource_paths import resource_path
+from i18n import normalize_language
 
 
 def get_config_path():
@@ -356,6 +357,7 @@ def _migrate_configuration(config_path, config):
     """Atomically migrate legacy API settings and copy, never delete, its key."""
 
     original = copy.deepcopy(config)
+    config["language"] = normalize_language(config.get("language"))
     legacy_key = config.get("api_key", "")
     stored_key = read_api_key(CREDENTIAL_TARGET)
     if not stored_key and _is_legacy_api_key(legacy_key):
@@ -412,6 +414,7 @@ def save_config(config: dict):
     """Save non-secret settings to config.json."""
     config_path = get_config_path()
     sanitized = copy.deepcopy(config)
+    sanitized["language"] = normalize_language(sanitized.get("language"))
     sanitized.pop("api_key", None)
     for key in ("base_url", "default_model", "request_template"):
         sanitized.pop(key, None)
