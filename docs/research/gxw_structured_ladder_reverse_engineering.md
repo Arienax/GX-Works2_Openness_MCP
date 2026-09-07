@@ -108,7 +108,7 @@ Samples 53-55 provide strong cross-validation for two of the three descriptor fi
 
 ```text
 uint32 size               # observed 16
-uint32 port_kind_code     # observed values 0, 2, 3; exact semantics still unknown
+uint32 port_kind_code     # observed 0, 2, 3; NC sample 50 additionally uses 11
 uint32 local_x            # verified local X coordinate relative to node.left
 uint32 local_y            # verified local Y coordinate relative to node.top
 ```
@@ -131,6 +131,9 @@ Observed values so far:
 | contact left, coil left, MOV EN, MOV s, output-value D1 left | 3 |
 | contact right, MOV d, input-value `10` right | 2 |
 | coil right, MOV ENO | 0 |
+| normally-closed contact left (original sample 50) | 11 |
+
+The first row's contact-left code 3 applies to normally-open contacts. Inspecting the original sample-50 bytes establishes `[11, 2]` for NC, not `[3, 2]`.
 
 These values look role-like rather than state-like, but the exact Mitsubishi semantics remain unproven. Keep the neutral name `port_kind_code`.
 
@@ -148,6 +151,8 @@ Verified node-kind codes:
 | `0x0E` | Output/value node | `D1` in samples 53-55 |
 
 The symbol is stored directly as UTF-16LE text. The direct-device and global-label samples show that the program node stores the symbol string; global-label binding is held separately in `Global1.gh`.
+
+Later samples 72-75 establish `0x02` as an FB instance with a different layout: instance string, type string, bbox and ports, without the ordinary-node flag/reserved fields above. FB port codes also differ. See [FB ABI findings 72-75](gxw_structured_fb_abi_72_75.md).
 
 ## Wire record
 
@@ -318,7 +323,7 @@ Wire interior crosses Wire interior
 
 Structured Ladder wires observed so far are orthogonal. The graph builder rejects diagonal wire records rather than guessing at unsupported geometry.
 
-This layer intentionally reconstructs **conductive nets only**. It does not connect the two ports through a contact, coil or function node; device/function semantics belong in the later PLC IR layer.
+This layer intentionally reconstructs **conductive nets only**. It does not connect the two ports through a contact, coil or function node; element semantics belong in the separate `StructuredSemanticModel`, above geometry and before PLC IR lowering.
 
 ## Global-label separation (48 vs 49)
 

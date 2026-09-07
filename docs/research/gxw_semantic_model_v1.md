@@ -2,7 +2,7 @@
 
 > Status: experimental, read-only.
 >
-> Evidence base: controlled GX Works2 / FX3U Structured Ladder/FBD samples through 71.
+> Evidence base: controlled GX Works2 / FX3U Structured Ladder/FBD samples through 77.
 
 ## Purpose
 
@@ -17,7 +17,7 @@ The binary parser and `ConnectivityGraph` recover editor records and conductive 
   -> project-level plc_ir.py
 ```
 
-The v1 model does **not** lower Structured Ladder directly into the canonical project PLC IR. It preserves that boundary until contacts/coils, FB instances, timers/counters and additional Function forms are understood well enough to lower without guessing.
+The model does **not** lower Structured Ladder directly into the canonical project PLC IR. It now describes contacts/coils and the observed TON/TON_E/CTU/CTU_E instance interfaces, while execution order, state evaluation and declaration binding remain separate milestones.
 
 ## Modeled objects
 
@@ -44,6 +44,49 @@ unknown
 ```
 
 Unknown layouts are retained and reported as semantic warnings rather than guessed.
+
+### Contacts and coils
+
+`StructuredSemanticModel.contacts` and `.coils` retain the symbol separately from the element's kind. `SemanticContact.polarity` is `NORMALLY_OPEN` for kind `0x03` and `NORMALLY_CLOSED` for kind `0x04`; kind `0x05` becomes `SemanticCoil` with `CoilRole.NORMAL`.
+
+| Element | Left port | Right port |
+|---|---|---|
+| NO contact | code 3, `EXECUTION_IN` | code 2, `EXECUTION_OUT` |
+| NC contact | code **11**, `EXECUTION_IN` | code 2, `EXECUTION_OUT` |
+| Ordinary coil | code 3, `EXECUTION_IN` | code 0, `UNKNOWN` |
+
+The original sample-50 bytes establish the NC input code as 11. The earlier synthetic test that changed only a NO node's kind to NC was insufficient and has been replaced by a real regression. Codes 3 and 11 are not treated as interchangeable.
+
+The observed layout has two aligned ports on opposite bbox edges, inside the bbox height. Every `SemanticLadderPort` preserves its serialized index, code, point, net and terminal bindings. Unsupported counts/layouts preserve all ports with unknown roles; unsupported codes produce a warning for the affected port. Elements with zero ports are still retained.
+
+Contacts expose optional `execution_in` / `execution_out`; coils expose optional `execution_in`. The coil's right graphic port emits `unmodeled_coil_output`: its existence and net are known, but its execution meaning is not. Ordinary coils currently produce this expected warning. Contact polarity is not a runtime contact state, and symbols such as `T0`, `C0` or a label do not change an element's kind.
+
+### FB instances and timer/counter interfaces
+
+Samples 72-75 introduce a separate binary node kind, `0x02`, with instance name and type name stored as separate strings; sample 77 adds CTU_E using the same layout. `StructuredNode.symbol` retains the instance name, `.instance_name` exposes it explicitly, and `.type_name` retains `TON`, `TON_E`, `CTU` or `CTU_E`. This layout has no ordinary-node `object_flag` / `reserved` fields; those values are `None` on FB nodes.
+
+`StructuredSemanticModel.function_blocks` contains `SemanticFunctionBlock` objects, separate from `.functions`. Each block preserves its instance name, type, category and `SemanticFunctionBlockPort` objects. `.timers` and `.counters` filter the registered categories; they do not simulate elapsed time or counting.
+
+FB inputs use code **1**, and all observed FB outputs use code **0**, including ordinary data outputs. Consequently, FB EN/ENO roles cannot use the Function port inference rules. `DEFAULT_FUNCTION_BLOCK_REGISTRY` records only these verified interfaces:
+
+| Type | Input formals, top to bottom | Output formals, top to bottom | Category |
+|---|---|---|---|
+| TON | IN, PT | Q, ET | timer |
+| TON_E | EN, IN, PT | ENO, Q, ET | timer |
+| CTU | CU, RESET, PV | Q, CV | counter |
+| CTU_E | EN, CU, RESET, PV | ENO, Q, CV | counter |
+
+Formal names are supplied by this evidence-backed registry, not decoded from strings on each port. Roles require the full registered count, code and geometry layout, with the first port on each side at local Y=2 and subsequent ports on consecutive rows. Serialized port indices remain intact even when ports are reordered. Unknown types or unsupported layouts retain the instance and every port with `UNKNOWN` roles, no formal names, and warnings.
+
+```python
+block = semantic.function_blocks[0]
+print(block.instance_name, block.type_name)
+port = block.port_named("PT")
+if port is not None:
+    print(port.net_index, port.terminal_symbols)  # observed TON: ("T#1s",)
+```
+
+See [FB ABI findings 72-75 and follow-ups 76-77](gxw_structured_fb_abi_72_75.md) for the exact record layout, rename comparison and remaining evidence limits.
 
 ### Source and sink terminals
 
@@ -91,7 +134,7 @@ ABS_E    fixed, observed 1 data input
 
 ## Connectivity binding
 
-Every semantic Function port and terminal keeps its `ConnectivityGraph` net index.
+Every semantic Function port, FB port, ladder port and terminal keeps its `ConnectivityGraph` net index. A supplied graph is used without rebuilding or renumbering its nets.
 
 This means function-to-function execution flow does not need a special edge type. Sample 65 is represented by a shared net:
 
@@ -102,6 +145,8 @@ MOV.enable_out.net_index == ADD_E.enable_in.net_index
 Directly attached terminals and explicit wire paths resolve to the same semantic binding because both have already been normalized by `ConnectivityGraph`.
 
 Each Function port also exposes directly attached/connected terminal symbols when terminals occur on the same conductive net.
+
+FB and ladder ports expose the same terminal bindings. Nets are never merged through a node. Real sample 54 connects `contact.execution_out` to `MOV.enable_in`, then `MOV.enable_out` to `coil.execution_in`. Sample 51 preserves the successive nets between series contacts, while sample 52's parallel contacts share an input net and share an output net with their two sides remaining distinct.
 
 ## Public API
 
@@ -126,6 +171,11 @@ Primary model types:
 StructuredSemanticModel
 SemanticFunction
 SemanticFunctionPort
+SemanticContact
+SemanticCoil
+SemanticLadderPort
+SemanticFunctionBlock
+SemanticFunctionBlockPort
 SemanticTerminal
 SemanticIssue
 UnmodeledNodeRef
@@ -138,7 +188,10 @@ The binary parser remains fail-closed for unsupported record structure. The sema
 - unknown Function port layouts become `SemanticPortRole.UNKNOWN` plus a warning;
 - arity mismatches become warnings;
 - unresolved `?` terminals become warnings;
-- contacts, coils and other not-yet-modeled node kinds are retained in `unmodeled_nodes`.
+- unknown contact/coil port layouts remain on modeled elements with warnings;
+- the observed coil right port remains unknown with an expected warning;
+- unknown FB types remain modeled instances with unknown port roles and warnings;
+- other not-yet-modeled node kinds are retained in `unmodeled_nodes`.
 
 This separation avoids turning incomplete reverse-engineering knowledge into false format errors.
 
@@ -153,13 +206,21 @@ The v1 semantic tests use extracted real `Program.pou` fixtures from controlled 
 - samples 70/71: `ABS` is `[data_in, data_out]`, while `ABS_E` is `[enable_in, data_in, enable_out, data_out]`;
 - samples 65-71 produce no unexpected semantic warnings.
 
+Additional real regressions cover samples 49-52 and 54-58 for labels, NC polarity/code 11, series/parallel nets and Contact/Function/Coil connections. Sample 52 reuses the exact bytes already held by the binary reader test. Samples 72-75 preserve exact Program.pou bytes, related label streams and SHA-256 provenance. They lock instance identity, the rename-only record difference, named timer/counter interfaces, net bindings, and sample 75's actual `Q -> T1` sink. All four FB samples produce no semantic warnings under the registered interfaces.
+
+Sample 76 adds two TON instances in the same POU with separate input/preset/output/elapsed-time terminal bindings and disjoint net sets. The existing model preserves both invocations without grouping them by type; this is source-connectivity evidence, not runtime state-allocation evidence. Its exact bytes and related label streams are in `gxw_structured_76.json`.
+
+Sample 77 adds CTU_E with seven ports. EN binds X0 and ENO binds M0, while CU/RESET/PV/Q/CV preserve sample 75's X1/X2/5/T1/D0 bindings. All three right-side ports have code 0, but only ENO is `ENABLE_OUT`; Q and CV are `DATA_OUT` on distinct nets. Its exact bytes and related label streams are in `gxw_structured_77.json`. Registration removes the previous unknown-type warning without changing the binary parser. The `_E` suffix alone still does not identify an unknown FB interface, and a known CTU_E type with an incompatible port layout remains fail-soft.
+
+Synthetic cases are explicitly named as such and test unknown interfaces, changed port order, unsupported geometry/codes/counts and malformed FB record boundaries. They are not counted as additional controlled GX Works2 samples.
+
 ## Next semantic milestones
 
 The next layer should not be implemented by guessing from ordinary Function behavior. Controlled samples are still needed for:
 
-1. FB instance records and multi-output behavior;
-2. timer/counter node semantics;
-3. contact/coil execution semantics combined with conductive nets;
+1. user-defined FBs, IN_OUT formals and explicit FB-to-FB wire paths;
+2. additional timer/counter forms, declaration binding and stateful execution;
+3. remaining contact/coil execution questions, power rails, SET/RESET and edge forms;
 4. labels and typed local variables at terminals;
 5. multiple networks/POUs;
 6. deterministic lowering from `StructuredSemanticModel` into `plc_ir.py`.

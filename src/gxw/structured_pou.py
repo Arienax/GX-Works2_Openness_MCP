@@ -36,24 +36,22 @@ def _u32(data: bytes, offset: int) -> int:
     return struct.unpack_from("<I", data, offset)[0]
 
 
-def _parse_node(record: bytes, absolute_offset: int) -> StructuredNode:
-    if len(record) < 42:
-        raise GXWFormatError(f"structured node at 0x{absolute_offset:X} is too short")
-
-    kind_code = _u32(record, 8)
-    char_count = _u32(record, 12)
-    string_start = 16
+def _parse_node_string(
+    record: bytes, cursor: int, absolute_offset: int, field_name: str
+) -> tuple[str, int]:
+    char_count = _u32(record, cursor)
+    string_start = cursor + 4
     string_end = string_start + char_count * 2
     if char_count == 0 or string_end > len(record):
         raise GXWFormatError(
-            f"invalid structured-node symbol length at 0x{absolute_offset:X}: {char_count}"
+            f"invalid structured-node {field_name} length at 0x{absolute_offset:X}: {char_count}"
         )
     raw_symbol = record[string_start:string_end]
     try:
         symbol_with_nul = raw_symbol.decode("utf-16le")
     except UnicodeDecodeError as exc:
         raise GXWFormatError(
-            f"invalid UTF-16LE node symbol at 0x{absolute_offset:X}"
+            f"invalid UTF-16LE node {field_name} at 0x{absolute_offset:X}"
         ) from exc
     symbol = (
         symbol_with_nul[:-1]
@@ -61,11 +59,27 @@ def _parse_node(record: bytes, absolute_offset: int) -> StructuredNode:
         else symbol_with_nul
     )
 
-    cursor = string_end
-    object_flag = _u32(record, cursor)
-    cursor += 4
-    reserved = _u16(record, cursor)
-    cursor += 2
+    return symbol, string_end
+
+
+def _parse_node(record: bytes, absolute_offset: int) -> StructuredNode:
+    if len(record) < 42:
+        raise GXWFormatError(f"structured node at 0x{absolute_offset:X} is too short")
+
+    kind_code = _u32(record, 8)
+    symbol, cursor = _parse_node_string(record, 12, absolute_offset, "symbol")
+    type_name = None
+    object_flag = None
+    reserved = None
+    if kind_code == 0x02:
+        # Samples 72-75: instance string, type string, bbox, port count/ports.
+        # There are no ordinary-node flag/reserved fields in this record form.
+        type_name, cursor = _parse_node_string(record, cursor, absolute_offset, "FB type")
+    else:
+        object_flag = _u32(record, cursor)
+        cursor += 4
+        reserved = _u16(record, cursor)
+        cursor += 2
     if cursor + 16 > len(record):
         raise GXWFormatError(
             f"structured node bbox is truncated at 0x{absolute_offset:X}"
@@ -117,6 +131,7 @@ def _parse_node(record: bytes, absolute_offset: int) -> StructuredNode:
         object_flag=object_flag,
         reserved=reserved,
         raw=record,
+        type_name=type_name,
     )
 
 

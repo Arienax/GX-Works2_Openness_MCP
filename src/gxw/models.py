@@ -12,6 +12,7 @@ class GXWFormatError(ValueError):
 
 class NodeKind(str, Enum):
     FUNCTION = "function"
+    FUNCTION_BLOCK = "function_block"
     CONTACT = "contact"
     CONTACT_NC = "contact_nc"
     COIL = "coil"
@@ -23,6 +24,7 @@ class NodeKind(str, Enum):
 def node_kind_from_code(kind_code: int) -> NodeKind:
     return {
         0x01: NodeKind.FUNCTION,
+        0x02: NodeKind.FUNCTION_BLOCK,
         0x03: NodeKind.CONTACT,
         0x04: NodeKind.CONTACT_NC,
         0x05: NodeKind.COIL,
@@ -85,9 +87,16 @@ class StructuredNode:
     symbol: str
     bbox: Rect
     ports: Tuple[PortDescriptor, ...]
-    object_flag: int
-    reserved: int
+    object_flag: Optional[int]
+    reserved: Optional[int]
     raw: bytes = field(repr=False)
+    # Kind 0x02 has a second string for the FB type, and no object_flag/reserved.
+    # Its first string (symbol) is the instance name, not the type name.
+    type_name: Optional[str] = None
+
+    @property
+    def instance_name(self) -> Optional[str]:
+        return self.symbol if self.kind == NodeKind.FUNCTION_BLOCK else None
 
     def port_point(self, port_index: int) -> Point:
         return self.ports[port_index].absolute_point(self.bbox)

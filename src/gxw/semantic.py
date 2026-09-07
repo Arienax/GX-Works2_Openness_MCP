@@ -6,18 +6,29 @@ import re
 from types import MappingProxyType
 from typing import Dict, Mapping, Optional, Tuple
 
-from .connectivity import ConnectivityGraph, build_connectivity_graph
+from .connectivity import ConnectivityGraph, ConnectivityNet, build_connectivity_graph
 from .models import NodeKind, Point, StructuredNode, StructuredProgram
 
 
 class SemanticPortRole(str, Enum):
-    """Observed semantic role of a Structured Ladder Function port."""
+    """Observed semantic role of a Structured Ladder node port."""
 
     ENABLE_IN = "enable_in"
     DATA_IN = "data_in"
     ENABLE_OUT = "enable_out"
     DATA_OUT = "data_out"
+    EXECUTION_IN = "execution_in"
+    EXECUTION_OUT = "execution_out"
     UNKNOWN = "unknown"
+
+
+class ContactPolarity(str, Enum):
+    NORMALLY_OPEN = "normally_open"
+    NORMALLY_CLOSED = "normally_closed"
+
+
+class CoilRole(str, Enum):
+    NORMAL = "normal"
 
 
 class TerminalRole(str, Enum):
@@ -34,6 +45,62 @@ class FunctionFamilySpec:
     base_name: str
     extensible_inputs: bool = False
     expected_data_inputs: Optional[int] = None
+
+
+class FunctionBlockCategory(str, Enum):
+    TIMER = "timer"
+    COUNTER = "counter"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class FunctionBlockPortSpec:
+    formal_name: str
+    role: SemanticPortRole
+    local_y: int
+
+
+@dataclass(frozen=True)
+class FunctionBlockSpec:
+    type_name: str
+    category: FunctionBlockCategory
+    ports: Tuple[FunctionBlockPortSpec, ...]
+
+
+# FB descriptors do not distinguish EN/IN or ENO/data OUT by code. Names and
+# roles require the type-specific layouts verified by samples 72-77.
+DEFAULT_FUNCTION_BLOCK_REGISTRY: Mapping[str, FunctionBlockSpec] = MappingProxyType({
+    "TON": FunctionBlockSpec("TON", FunctionBlockCategory.TIMER, (
+        FunctionBlockPortSpec("IN", SemanticPortRole.DATA_IN, 2),
+        FunctionBlockPortSpec("PT", SemanticPortRole.DATA_IN, 3),
+        FunctionBlockPortSpec("Q", SemanticPortRole.DATA_OUT, 2),
+        FunctionBlockPortSpec("ET", SemanticPortRole.DATA_OUT, 3),
+    )),
+    "TON_E": FunctionBlockSpec("TON_E", FunctionBlockCategory.TIMER, (
+        FunctionBlockPortSpec("EN", SemanticPortRole.ENABLE_IN, 2),
+        FunctionBlockPortSpec("IN", SemanticPortRole.DATA_IN, 3),
+        FunctionBlockPortSpec("PT", SemanticPortRole.DATA_IN, 4),
+        FunctionBlockPortSpec("ENO", SemanticPortRole.ENABLE_OUT, 2),
+        FunctionBlockPortSpec("Q", SemanticPortRole.DATA_OUT, 3),
+        FunctionBlockPortSpec("ET", SemanticPortRole.DATA_OUT, 4),
+    )),
+    "CTU": FunctionBlockSpec("CTU", FunctionBlockCategory.COUNTER, (
+        FunctionBlockPortSpec("CU", SemanticPortRole.DATA_IN, 2),
+        FunctionBlockPortSpec("RESET", SemanticPortRole.DATA_IN, 3),
+        FunctionBlockPortSpec("PV", SemanticPortRole.DATA_IN, 4),
+        FunctionBlockPortSpec("Q", SemanticPortRole.DATA_OUT, 2),
+        FunctionBlockPortSpec("CV", SemanticPortRole.DATA_OUT, 3),
+    )),
+    "CTU_E": FunctionBlockSpec("CTU_E", FunctionBlockCategory.COUNTER, (
+        FunctionBlockPortSpec("EN", SemanticPortRole.ENABLE_IN, 2),
+        FunctionBlockPortSpec("CU", SemanticPortRole.DATA_IN, 3),
+        FunctionBlockPortSpec("RESET", SemanticPortRole.DATA_IN, 4),
+        FunctionBlockPortSpec("PV", SemanticPortRole.DATA_IN, 5),
+        FunctionBlockPortSpec("ENO", SemanticPortRole.ENABLE_OUT, 2),
+        FunctionBlockPortSpec("Q", SemanticPortRole.DATA_OUT, 3),
+        FunctionBlockPortSpec("CV", SemanticPortRole.DATA_OUT, 4),
+    )),
+})
 
 
 # This registry records only function-family facts established by controlled
@@ -120,6 +187,105 @@ class SemanticFunction:
 
 
 @dataclass(frozen=True)
+class SemanticFunctionBlockPort:
+    block_offset: int
+    port_index: int
+    formal_name: Optional[str]
+    role: SemanticPortRole
+    port_kind_code: int
+    point: Point
+    net_index: int
+    terminal_node_offsets: Tuple[int, ...]
+    terminal_symbols: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SemanticFunctionBlock:
+    node_offset: int
+    instance_name: str
+    type_name: Optional[str]
+    type_known: bool
+    category: FunctionBlockCategory
+    ports: Tuple[SemanticFunctionBlockPort, ...]
+
+    def port_named(self, formal_name: str) -> Optional[SemanticFunctionBlockPort]:
+        ports = tuple(port for port in self.ports if port.formal_name == formal_name)
+        return ports[0] if len(ports) == 1 else None
+
+    def ports_with_role(self, role: SemanticPortRole) -> Tuple[SemanticFunctionBlockPort, ...]:
+        return tuple(port for port in self.ports if port.role == role)
+
+    @property
+    def enable_in(self) -> Optional[SemanticFunctionBlockPort]:
+        ports = self.ports_with_role(SemanticPortRole.ENABLE_IN)
+        return ports[0] if len(ports) == 1 else None
+
+    @property
+    def enable_out(self) -> Optional[SemanticFunctionBlockPort]:
+        ports = self.ports_with_role(SemanticPortRole.ENABLE_OUT)
+        return ports[0] if len(ports) == 1 else None
+
+    @property
+    def has_enable_interface(self) -> bool:
+        return self.enable_in is not None and self.enable_out is not None
+
+    @property
+    def data_inputs(self) -> Tuple[SemanticFunctionBlockPort, ...]:
+        return self.ports_with_role(SemanticPortRole.DATA_IN)
+
+    @property
+    def data_outputs(self) -> Tuple[SemanticFunctionBlockPort, ...]:
+        return self.ports_with_role(SemanticPortRole.DATA_OUT)
+
+
+@dataclass(frozen=True)
+class SemanticLadderPort:
+    node_offset: int
+    port_index: int
+    role: SemanticPortRole
+    port_kind_code: int
+    point: Point
+    net_index: int
+    terminal_node_offsets: Tuple[int, ...]
+    terminal_symbols: Tuple[str, ...]
+
+
+def _unique_ladder_port(
+    ports: Tuple[SemanticLadderPort, ...], role: SemanticPortRole
+) -> Optional[SemanticLadderPort]:
+    matches = tuple(port for port in ports if port.role == role)
+    return matches[0] if len(matches) == 1 else None
+
+
+@dataclass(frozen=True)
+class SemanticContact:
+    node_offset: int
+    symbol: str
+    polarity: ContactPolarity
+    ports: Tuple[SemanticLadderPort, ...]
+
+    @property
+    def execution_in(self) -> Optional[SemanticLadderPort]:
+        return _unique_ladder_port(self.ports, SemanticPortRole.EXECUTION_IN)
+
+    @property
+    def execution_out(self) -> Optional[SemanticLadderPort]:
+        return _unique_ladder_port(self.ports, SemanticPortRole.EXECUTION_OUT)
+
+
+@dataclass(frozen=True)
+class SemanticCoil:
+    node_offset: int
+    symbol: str
+    role: CoilRole
+    ports: Tuple[SemanticLadderPort, ...]
+
+    @property
+    def execution_in(self) -> Optional[SemanticLadderPort]:
+        return _unique_ladder_port(self.ports, SemanticPortRole.EXECUTION_IN)
+
+
+@dataclass(frozen=True)
 class UnmodeledNodeRef:
     node_offset: int
     kind: NodeKind
@@ -133,9 +299,20 @@ class StructuredSemanticModel:
     terminals: Tuple[SemanticTerminal, ...]
     unmodeled_nodes: Tuple[UnmodeledNodeRef, ...]
     issues: Tuple[SemanticIssue, ...]
+    contacts: Tuple[SemanticContact, ...] = ()
+    coils: Tuple[SemanticCoil, ...] = ()
+    function_blocks: Tuple[SemanticFunctionBlock, ...] = ()
 
     def functions_named(self, base_name: str) -> Tuple[SemanticFunction, ...]:
         return tuple(function for function in self.functions if function.base_name == base_name)
+
+    @property
+    def timers(self) -> Tuple[SemanticFunctionBlock, ...]:
+        return tuple(block for block in self.function_blocks if block.category == FunctionBlockCategory.TIMER)
+
+    @property
+    def counters(self) -> Tuple[SemanticFunctionBlock, ...]:
+        return tuple(block for block in self.function_blocks if block.category == FunctionBlockCategory.COUNTER)
 
 
 @dataclass(frozen=True)
@@ -317,6 +494,260 @@ def _infer_function_port_roles(
     return tuple(roles), tuple(issues)
 
 
+def _net_terminals(
+    net: ConnectivityNet,
+    terminal_by_offset: Mapping[int, SemanticTerminal],
+) -> Tuple[SemanticTerminal, ...]:
+    return tuple(
+        sorted(
+            (
+                terminal_by_offset[ref.node_offset]
+                for ref in net.ports
+                if ref.node_offset in terminal_by_offset
+            ),
+            key=lambda terminal: terminal.node_offset,
+        )
+    )
+
+
+def _matches_function_block_port(
+    node: StructuredNode, port_index: int, spec: FunctionBlockPortSpec,
+) -> bool:
+    port = node.ports[port_index]
+    point = node.port_point(port_index)
+    if not (
+        node.bbox.left < node.bbox.right
+        and node.bbox.top < point.y < node.bbox.bottom
+        and port.local_y == spec.local_y
+    ):
+        return False
+    if spec.role in {SemanticPortRole.ENABLE_IN, SemanticPortRole.DATA_IN}:
+        return port.port_kind_code == 1 and point.x == node.bbox.left
+    if spec.role in {SemanticPortRole.ENABLE_OUT, SemanticPortRole.DATA_OUT}:
+        return port.port_kind_code == 0 and point.x == node.bbox.right
+    return False
+
+
+def _resolve_function_block_ports(
+    node: StructuredNode, spec: Optional[FunctionBlockSpec],
+) -> Tuple[Tuple[Optional[FunctionBlockPortSpec], ...], Tuple[SemanticIssue, ...]]:
+    unknown = tuple(None for _ in node.ports)
+    if spec is None:
+        return unknown, (SemanticIssue(
+            code="unknown_function_block_type",
+            message=(
+                f"FB instance {node.symbol!r} has unregistered type {node.type_name!r}; "
+                "formal port names and roles are not inferred"
+            ),
+            node_offset=node.offset,
+        ),)
+    if len(node.ports) != len(spec.ports):
+        return unknown, (SemanticIssue(
+            code="function_block_port_count",
+            message=(
+                f"FB instance {node.symbol!r} ({node.type_name}) has {len(node.ports)} "
+                f"ports; the observed type interface has {len(spec.ports)}"
+            ),
+            node_offset=node.offset,
+        ),)
+
+    candidates = [
+        [index for index in range(len(node.ports)) if _matches_function_block_port(node, index, port)]
+        for port in spec.ports
+    ]
+    if (
+        any(len(indices) != 1 for indices in candidates)
+        or len({indices[0] for indices in candidates}) != len(node.ports)
+    ):
+        return unknown, (SemanticIssue(
+            code="function_block_port_layout",
+            message=(
+                f"FB instance {node.symbol!r} ({node.type_name}) does not match the "
+                "observed type-specific port codes and geometry"
+            ),
+            node_offset=node.offset,
+        ),)
+
+    by_index = {indices[0]: port for indices, port in zip(candidates, spec.ports)}
+    return tuple(by_index[index] for index in range(len(node.ports))), ()
+
+
+def _function_block_semantics(
+    program: StructuredProgram,
+    graph: ConnectivityGraph,
+    terminals: Tuple[SemanticTerminal, ...],
+    registry: Mapping[str, FunctionBlockSpec],
+) -> Tuple[Tuple[SemanticFunctionBlock, ...], Tuple[SemanticIssue, ...]]:
+    terminal_by_offset = {terminal.node_offset: terminal for terminal in terminals}
+    blocks = []
+    issues = []
+    for node in program.nodes:
+        if node.kind != NodeKind.FUNCTION_BLOCK:
+            continue
+        spec = registry.get(node.type_name) if node.type_name is not None else None
+        port_specs, port_issues = _resolve_function_block_ports(node, spec)
+        issues.extend(port_issues)
+        ports = []
+        for index, (port, port_spec) in enumerate(zip(node.ports, port_specs)):
+            net = graph.net_for_port(node.offset, index)
+            terminal_refs = _net_terminals(net, terminal_by_offset)
+            ports.append(SemanticFunctionBlockPort(
+                block_offset=node.offset,
+                port_index=index,
+                formal_name=port_spec.formal_name if port_spec else None,
+                role=port_spec.role if port_spec else SemanticPortRole.UNKNOWN,
+                port_kind_code=port.port_kind_code,
+                point=node.port_point(index),
+                net_index=net.index,
+                terminal_node_offsets=tuple(terminal.node_offset for terminal in terminal_refs),
+                terminal_symbols=tuple(terminal.symbol for terminal in terminal_refs),
+            ))
+        blocks.append(SemanticFunctionBlock(
+            node_offset=node.offset,
+            instance_name=node.symbol,
+            type_name=node.type_name,
+            type_known=spec is not None,
+            category=spec.category if spec else FunctionBlockCategory.UNKNOWN,
+            ports=tuple(ports),
+        ))
+    return tuple(blocks), tuple(issues)
+
+
+def _infer_ladder_port_roles(
+    node: StructuredNode,
+) -> Tuple[Tuple[SemanticPortRole, ...], Tuple[SemanticIssue, ...]]:
+    roles = [SemanticPortRole.UNKNOWN for _ in node.ports]
+    if len(node.ports) != 2:
+        return tuple(roles), (
+            SemanticIssue(
+                code="ladder_port_count",
+                message=(
+                    f"{node.kind.value} {node.symbol!r} has {len(node.ports)} ports; "
+                    "controlled samples currently expect exactly two"
+                ),
+                node_offset=node.offset,
+            ),
+        )
+
+    points = tuple(node.port_point(index) for index in range(len(node.ports)))
+    left = [index for index, point in enumerate(points) if point.x == node.bbox.left]
+    right = [index for index, point in enumerate(points) if point.x == node.bbox.right]
+    if (
+        node.bbox.left >= node.bbox.right
+        or len(left) != 1
+        or len(right) != 1
+        or points[left[0]].y != points[right[0]].y
+        or not node.bbox.top < points[left[0]].y < node.bbox.bottom
+    ):
+        return tuple(roles), (
+            SemanticIssue(
+                code="ladder_port_layout",
+                message=(
+                    f"{node.kind.value} {node.symbol!r} has unsupported port geometry; "
+                    "expected aligned left/right ports inside the bbox height"
+                ),
+                node_offset=node.offset,
+            ),
+        )
+
+    issues = []
+    # Sample 50 independently establishes code 11 on the NC contact's left port.
+    input_code = 11 if node.kind == NodeKind.CONTACT_NC else 3
+    for index, port in enumerate(node.ports):
+        if index == left[0] and port.port_kind_code == input_code:
+            roles[index] = SemanticPortRole.EXECUTION_IN
+        elif index == right[0] and node.kind != NodeKind.COIL and port.port_kind_code == 2:
+            roles[index] = SemanticPortRole.EXECUTION_OUT
+        elif index == right[0] and node.kind == NodeKind.COIL and port.port_kind_code == 0:
+            # The coil's code-0 right port is observed, but its execution meaning
+            # is not. Do not reuse the Function-specific ENO interpretation.
+            issues.append(
+                SemanticIssue(
+                    code="unmodeled_coil_output",
+                    message=(
+                        f"coil {node.symbol!r} has the observed code-0 right graphic port; "
+                        "its execution role is unverified and its net is preserved"
+                    ),
+                    node_offset=node.offset,
+                    port_index=index,
+                )
+            )
+        else:
+            issues.append(
+                SemanticIssue(
+                    code="unknown_ladder_port",
+                    message=(
+                        f"{node.kind.value} {node.symbol!r} port {index} has unsupported "
+                        f"port_kind_code {port.port_kind_code} at {points[index]}"
+                    ),
+                    node_offset=node.offset,
+                    port_index=index,
+                )
+            )
+
+    return tuple(roles), tuple(issues)
+
+
+def _ladder_semantics(
+    program: StructuredProgram,
+    graph: ConnectivityGraph,
+    terminals: Tuple[SemanticTerminal, ...],
+) -> Tuple[Tuple[SemanticContact, ...], Tuple[SemanticCoil, ...], Tuple[SemanticIssue, ...]]:
+    terminal_by_offset = {terminal.node_offset: terminal for terminal in terminals}
+    contacts = []
+    coils = []
+    issues = []
+    for node in program.nodes:
+        if node.kind not in {NodeKind.CONTACT, NodeKind.CONTACT_NC, NodeKind.COIL}:
+            continue
+
+        roles, role_issues = _infer_ladder_port_roles(node)
+        issues.extend(role_issues)
+        semantic_ports = []
+        for port_index, (port, role) in enumerate(zip(node.ports, roles)):
+            net = graph.net_for_port(node.offset, port_index)
+            terminal_refs = _net_terminals(net, terminal_by_offset)
+            semantic_ports.append(
+                SemanticLadderPort(
+                    node_offset=node.offset,
+                    port_index=port_index,
+                    role=role,
+                    port_kind_code=port.port_kind_code,
+                    point=node.port_point(port_index),
+                    net_index=net.index,
+                    terminal_node_offsets=tuple(
+                        terminal.node_offset for terminal in terminal_refs
+                    ),
+                    terminal_symbols=tuple(terminal.symbol for terminal in terminal_refs),
+                )
+            )
+
+        if node.kind == NodeKind.COIL:
+            coils.append(
+                SemanticCoil(
+                    node_offset=node.offset,
+                    symbol=node.symbol,
+                    role=CoilRole.NORMAL,
+                    ports=tuple(semantic_ports),
+                )
+            )
+        else:
+            contacts.append(
+                SemanticContact(
+                    node_offset=node.offset,
+                    symbol=node.symbol,
+                    polarity=(
+                        ContactPolarity.NORMALLY_OPEN
+                        if node.kind == NodeKind.CONTACT
+                        else ContactPolarity.NORMALLY_CLOSED
+                    ),
+                    ports=tuple(semantic_ports),
+                )
+            )
+
+    return tuple(contacts), tuple(coils), tuple(issues)
+
+
 def _function_semantics(
     program: StructuredProgram,
     graph: ConnectivityGraph,
@@ -340,14 +771,7 @@ def _function_semantics(
         semantic_ports = []
         for port_index, (port, role) in enumerate(zip(node.ports, roles)):
             net = graph.net_for_port(node.offset, port_index)
-            terminal_refs = sorted(
-                (
-                    terminal_by_offset[ref.node_offset]
-                    for ref in net.ports
-                    if ref.node_offset in terminal_by_offset
-                ),
-                key=lambda terminal: terminal.node_offset,
-            )
+            terminal_refs = _net_terminals(net, terminal_by_offset)
             semantic_ports.append(
                 SemanticFunctionPort(
                     function_offset=node.offset,
@@ -420,13 +844,16 @@ def build_semantic_model(
     *,
     connectivity: Optional[ConnectivityGraph] = None,
     function_registry: Mapping[str, FunctionFamilySpec] = DEFAULT_FUNCTION_FAMILY_REGISTRY,
+    function_block_registry: Mapping[str, FunctionBlockSpec] = DEFAULT_FUNCTION_BLOCK_REGISTRY,
 ) -> StructuredSemanticModel:
     """Build the first read-only semantic layer above GXW geometry.
 
-    The model is intentionally evidence-limited. It identifies observed Function
-    port roles, terminal graph roles, extensible-function arity and net bindings,
-    but it does not yet lower Structured Ladder to the project-level PLC IR.
-    Contacts, coils and other node kinds are preserved as unmodeled references.
+    The model identifies observed Function and terminal roles, contact polarity,
+    ordinary coils, FB instances and net bindings. Known TON/TON_E/CTU/CTU_E interfaces
+    use a separate registry; this layer does not simulate timer/counter state.
+    The coil's code-0 right port keeps an unknown
+    role pending execution evidence. Other node kinds remain unmodeled references.
+    It does not yet lower Structured Ladder to the project-level PLC IR.
     """
 
     graph = connectivity if connectivity is not None else build_connectivity_graph(program)
@@ -437,11 +864,19 @@ def build_semantic_model(
         terminals,
         function_registry,
     )
+    contacts, coils, ladder_issues = _ladder_semantics(program, graph, terminals)
+    function_blocks, block_issues = _function_block_semantics(
+        program, graph, terminals, function_block_registry,
+    )
 
     unmodeled = tuple(
         UnmodeledNodeRef(node_offset=node.offset, kind=node.kind, symbol=node.symbol)
         for node in program.nodes
-        if node.kind not in {NodeKind.FUNCTION, NodeKind.INPUT, NodeKind.OUTPUT}
+        if node.kind not in {
+            NodeKind.FUNCTION, NodeKind.INPUT, NodeKind.OUTPUT,
+            NodeKind.CONTACT, NodeKind.CONTACT_NC, NodeKind.COIL,
+            NodeKind.FUNCTION_BLOCK,
+        }
     )
 
     return StructuredSemanticModel(
@@ -449,5 +884,8 @@ def build_semantic_model(
         functions=functions,
         terminals=terminals,
         unmodeled_nodes=unmodeled,
-        issues=tuple([*terminal_issues, *function_issues]),
+        issues=tuple([*terminal_issues, *function_issues, *ladder_issues, *block_issues]),
+        contacts=contacts,
+        coils=coils,
+        function_blocks=function_blocks,
     )

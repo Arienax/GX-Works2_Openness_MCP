@@ -28,6 +28,7 @@ def _node_label(node: StructuredNode) -> str:
         "contact_nc": "ContactNC",
         "coil": "Coil",
         "function": "Function",
+        "function_block": "FunctionBlock",
         "input": "Input",
         "output": "Output",
         "unknown": f"Node[0x{node.kind_code:02X}]",
@@ -42,7 +43,12 @@ def describe_program(program: StructuredProgram) -> List[str]:
     ]
     for record in program.iter_records():
         if isinstance(record, StructuredNode):
-            lines.append(f"{_node_label(record)} {record.symbol} @ {record.bbox}")
+            identity = (
+                f"{record.symbol}: {record.type_name}"
+                if record.type_name is not None
+                else record.symbol
+            )
+            lines.append(f"{_node_label(record)} {identity} @ {record.bbox}")
         elif isinstance(record, StructuredWire):
             lines.append(
                 f"Wire ({record.start.x},{record.start.y}) -> "
